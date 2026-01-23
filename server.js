@@ -6,15 +6,12 @@ const app = express();
 const server = http.createServer(app);
 
 const io = new Server(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
-  }
+  cors: { origin: "*" }
 });
 
 /*
-  waiting[serverName] = array socket.id yang menunggu
-  users[socket.id] = data user
+waiting[server] = array socket.id
+users[socket.id] = user data
 */
 const waiting = {
   server1: [],
@@ -25,16 +22,9 @@ const waiting = {
 const users = {};
 
 io.on("connection", socket => {
-  console.log("🟢 User connect:", socket.id);
+  console.log("🟢 connect", socket.id);
 
   socket.on("join", data => {
-    /*
-      data = {
-        name, age, gender, job,
-        server, photo, location
-      }
-    */
-
     users[socket.id] = {
       id: socket.id,
       name: data.name,
@@ -44,34 +34,13 @@ io.on("connection", socket => {
       server: data.server,
       photo: data.photo || "",
       location: data.location || "",
-      partner: null
+      partner: null,
+      matched: false
     };
 
     socket.join(data.server);
 
-    // Cek antrian server
-    const queue = waiting[data.server];
-
-    if (queue.length > 0) {
-      // Match dengan user lain
-      const partnerId = queue.shift();
-      const partnerSocket = io.sockets.sockets.get(partnerId);
-
-      if (!partnerSocket) return;
-
-      users[socket.id].partner = partnerId;
-      users[partnerId].partner = socket.id;
-
-      // Kirim info partner ke masing-masing
-      socket.emit("matched", users[partnerId]);
-      partnerSocket.emit("matched", users[socket.id]);
-
-      console.log(`🔗 Match ${socket.id} <-> ${partnerId}`);
-    } else {
-      // Masuk antrian
-      queue.push(socket.id);
-      console.log(`⏳ Menunggu di ${data.server}`);
-    }
+    tryMatch(socket, data.server);
   });
 
   socket.on("message", text => {
@@ -91,20 +60,21 @@ io.on("connection", socket => {
     const user = users[socket.id];
     if (!user) return;
 
-    console.log("🔴 User disconnect:", socket.id);
+    console.log("🔴 disconnect", socket.id);
 
-    // Hapus dari waiting queue
+    // remove from waiting
     const q = waiting[user.server];
     if (q) {
       const i = q.indexOf(socket.id);
       if (i !== -1) q.splice(i, 1);
     }
 
-    // Putuskan partner
+    // notify partner
     if (user.partner) {
-      const partner = users[user.partner];
-      if (partner) {
-        partner.partner = null;
+      const p = users[user.partner];
+      if (p) {
+        p.partner = null;
+        p.matched = false;
         io.to(user.partner).emit("message", {
           text: "Partner keluar dari chat",
           time: timeNow()
@@ -116,6 +86,41 @@ io.on("connection", socket => {
   });
 });
 
+/* =======================
+   MATCHING ENGINE (FIX)
+======================= */
+function tryMatch(socket, serverName) {
+  const queue = waiting[serverName];
+  if (!queue) return;
+
+  // bersihkan socket invalid
+  while (queue.length > 0) {
+    const partnerId = queue.shift();
+    const partnerSocket = io.sockets.sockets.get(partnerId);
+
+    if (!partnerSocket || !users[partnerId] || users[partnerId].matched) {
+      continue; // cari partner lain
+    }
+
+    // MATCH AMAN
+    users[socket.id].partner = partnerId;
+    users[partnerId].partner = socket.id;
+    users[socket.id].matched = true;
+    users[partnerId].matched = true;
+
+    socket.emit("matched", users[partnerId]);
+    partnerSocket.emit("matched", users[socket.id]);
+
+    console.log("🔗 MATCH", socket.id, "<->", partnerId);
+    return;
+  }
+
+  // tidak dapat partner → masuk antrian
+  waiting[serverName].push(socket.id);
+  console.log("⏳ waiting", socket.id, "in", serverName);
+}
+
+/* ===================== */
 function timeNow() {
   const d = new Date();
   return d.getHours().toString().padStart(2, "0") + ":" +
@@ -124,5 +129,5 @@ function timeNow() {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log("🚀 Server running on port", PORT);
+  console.log("🚀 running on", PORT);
 });
