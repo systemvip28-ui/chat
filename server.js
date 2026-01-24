@@ -20,6 +20,7 @@ const users = {};
 io.on("connection", socket => {
   console.log("connect", socket.id);
 
+  // Event typing
   socket.on("typing", () => {
     const user = users[socket.id];
     if (!user || !user.partner) return;
@@ -30,6 +31,7 @@ io.on("connection", socket => {
     partnerSocket.emit("typing");
   });
 
+  // Event join
   socket.on("join", data => {
     users[socket.id] = {
       id: socket.id,
@@ -48,11 +50,7 @@ io.on("connection", socket => {
     tryMatch(socket, data.server);
   });
 
-  socket.on("message", text => { ... });
-
-  socket.on("disconnect", () => { ... });
-});
-
+  // Event message
   socket.on("message", text => {
     const user = users[socket.id];
     if (!user || !user.partner) return;
@@ -66,33 +64,36 @@ io.on("connection", socket => {
     });
   });
 
-socket.on("disconnect", () => {
-  const user = users[socket.id];
-  if (!user) return;
+  // Event disconnect
+  socket.on("disconnect", () => {
+    const user = users[socket.id];
+    if (!user) return;
 
-  const q = waiting[user.server];
-  if (q) {
-    const i = q.indexOf(socket.id);
-    if (i !== -1) q.splice(i, 1);
-  }
-
-  if (user.partner) {
-    const p = users[user.partner];
-    if (p) {
-      p.partner = null;
-      p.matched = false;
-
-      io.to(user.partner).emit("message", {
-        text: "Partner keluar dari chat",
-        time: timeNow()
-      });
-
-      io.to(user.partner).emit("partner-left"); 
+    const q = waiting[user.server];
+    if (q) {
+      const i = q.indexOf(socket.id);
+      if (i !== -1) q.splice(i, 1);
     }
-  }
 
-  delete users[socket.id];
+    if (user.partner) {
+      const p = users[user.partner];
+      if (p) {
+        p.partner = null;
+        p.matched = false;
+
+        io.to(user.partner).emit("message", {
+          text: "Partner keluar dari chat",
+          time: timeNow()
+        });
+
+        io.to(user.partner).emit("partner-left");
+      }
+    }
+
+    delete users[socket.id];
+  });
 });
+
 
 function tryMatch(socket, serverName) {
   const queue = waiting[serverName];
