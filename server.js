@@ -9,10 +9,6 @@ const io = new Server(server, {
   cors: { origin: "*" }
 });
 
-/*
-waiting[server] = array socket.id
-users[socket.id] = user data
-*/
 const waiting = {
   server1: [],
   server2: [],
@@ -22,7 +18,7 @@ const waiting = {
 const users = {};
 
 io.on("connection", socket => {
-  console.log("🟢 connect", socket.id);
+  console.log("connect", socket.id);
 
   socket.on("join", data => {
     users[socket.id] = {
@@ -60,16 +56,14 @@ io.on("connection", socket => {
     const user = users[socket.id];
     if (!user) return;
 
-    console.log("🔴 disconnect", socket.id);
+    console.log("disconnect", socket.id);
 
-    // remove from waiting
     const q = waiting[user.server];
     if (q) {
       const i = q.indexOf(socket.id);
       if (i !== -1) q.splice(i, 1);
     }
 
-    // notify partner
     if (user.partner) {
       const p = users[user.partner];
       if (p) {
@@ -86,23 +80,18 @@ io.on("connection", socket => {
   });
 });
 
-/* =======================
-   MATCHING ENGINE (FIX)
-======================= */
 function tryMatch(socket, serverName) {
   const queue = waiting[serverName];
   if (!queue) return;
 
-  // bersihkan socket invalid
   while (queue.length > 0) {
     const partnerId = queue.shift();
     const partnerSocket = io.sockets.sockets.get(partnerId);
 
     if (!partnerSocket || !users[partnerId] || users[partnerId].matched) {
-      continue; // cari partner lain
+      continue; 
     }
 
-    // MATCH AMAN
     users[socket.id].partner = partnerId;
     users[partnerId].partner = socket.id;
     users[socket.id].matched = true;
@@ -111,16 +100,14 @@ function tryMatch(socket, serverName) {
     socket.emit("matched", users[partnerId]);
     partnerSocket.emit("matched", users[socket.id]);
 
-    console.log("🔗 MATCH", socket.id, "<->", partnerId);
+    console.log("MATCH", socket.id, "<->", partnerId);
     return;
   }
 
-  // tidak dapat partner → masuk antrian
   waiting[serverName].push(socket.id);
-  console.log("⏳ waiting", socket.id, "in", serverName);
+  console.log("waiting", socket.id, "in", serverName);
 }
 
-/* ===================== */
 function timeNow() {
   const d = new Date();
   return d.getHours().toString().padStart(2, "0") + ":" +
@@ -129,5 +116,5 @@ function timeNow() {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log("🚀 running on", PORT);
+  console.log("running on", PORT);
 });
