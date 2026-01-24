@@ -65,33 +65,38 @@ io.on("connection", socket => {
   });
 
   // Event disconnect
-  socket.on("disconnect", () => {
-    const user = users[socket.id];
-    if (!user) return;
+// Event disconnect
+socket.on("disconnect", () => {
+  const user = users[socket.id];
+  if (!user) return;
 
-    const q = waiting[user.server];
-    if (q) {
-      const i = q.indexOf(socket.id);
-      if (i !== -1) q.splice(i, 1);
+  // Remove from waiting queue
+  const q = waiting[user.server];
+  if (q) {
+    const i = q.indexOf(socket.id);
+    if (i !== -1) q.splice(i, 1);
+  }
+
+  // Notify partner if exists
+  if (user.partner) {
+    const p = users[user.partner];
+    if (p) {
+      p.partner = null;
+      p.matched = false;
+
+      const partnerName = user.name || "Anonim"; // use name or "Anonim"
+      io.to(user.partner).emit("message", {
+        text: `${partnerName} keluar dari chat`, // dynamic name
+        time: timeNow()
+      });
+
+      io.to(user.partner).emit("partner-left");
     }
+  }
 
-    if (user.partner) {
-      const p = users[user.partner];
-      if (p) {
-        p.partner = null;
-        p.matched = false;
+  delete users[socket.id];
+});
 
-        io.to(user.partner).emit("message", {
-          text: "Partner keluar dari chat",
-          time: timeNow()
-        });
-
-        io.to(user.partner).emit("partner-left");
-      }
-    }
-
-    delete users[socket.id];
-  });
 });
 
 
