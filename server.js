@@ -20,6 +20,16 @@ const users = {};
 io.on("connection", socket => {
   console.log("connect", socket.id);
 
+  socket.on("typing", () => {
+    const user = users[socket.id];
+    if (!user || !user.partner) return;
+
+    const partnerSocket = io.sockets.sockets.get(user.partner);
+    if (!partnerSocket) return;
+
+    partnerSocket.emit("typing");
+  });
+
   socket.on("join", data => {
     users[socket.id] = {
       id: socket.id,
@@ -35,9 +45,13 @@ io.on("connection", socket => {
     };
 
     socket.join(data.server);
-
     tryMatch(socket, data.server);
   });
+
+  socket.on("message", text => { ... });
+
+  socket.on("disconnect", () => { ... });
+});
 
   socket.on("message", text => {
     const user = users[socket.id];
@@ -52,32 +66,32 @@ io.on("connection", socket => {
     });
   });
 
-  socket.on("disconnect", () => {
-    const user = users[socket.id];
-    if (!user) return;
+socket.on("disconnect", () => {
+  const user = users[socket.id];
+  if (!user) return;
 
-    console.log("disconnect", socket.id);
+  const q = waiting[user.server];
+  if (q) {
+    const i = q.indexOf(socket.id);
+    if (i !== -1) q.splice(i, 1);
+  }
 
-    const q = waiting[user.server];
-    if (q) {
-      const i = q.indexOf(socket.id);
-      if (i !== -1) q.splice(i, 1);
+  if (user.partner) {
+    const p = users[user.partner];
+    if (p) {
+      p.partner = null;
+      p.matched = false;
+
+      io.to(user.partner).emit("message", {
+        text: "Partner keluar dari chat",
+        time: timeNow()
+      });
+
+      io.to(user.partner).emit("partner-left"); 
     }
+  }
 
-    if (user.partner) {
-      const p = users[user.partner];
-      if (p) {
-        p.partner = null;
-        p.matched = false;
-        io.to(user.partner).emit("message", {
-          text: "Partner keluar dari chat",
-          time: timeNow()
-        });
-      }
-    }
-
-    delete users[socket.id];
-  });
+  delete users[socket.id];
 });
 
 function tryMatch(socket, serverName) {
