@@ -20,7 +20,6 @@ const users = {};
 io.on("connection", socket => {
   console.log("connect", socket.id);
 
-  // Event typing
   socket.on("typing", () => {
     const user = users[socket.id];
     if (!user || !user.partner) return;
@@ -31,7 +30,6 @@ io.on("connection", socket => {
     partnerSocket.emit("typing");
   });
 
-  // Event join
   socket.on("join", data => {
     users[socket.id] = {
       id: socket.id,
@@ -50,7 +48,6 @@ io.on("connection", socket => {
     tryMatch(socket, data.server);
   });
 
-  // Event message
   socket.on("message", text => {
     const user = users[socket.id];
     if (!user || !user.partner) return;
@@ -64,29 +61,25 @@ io.on("connection", socket => {
     });
   });
 
-  // Event disconnect
-// Event disconnect
 socket.on("disconnect", () => {
   const user = users[socket.id];
   if (!user) return;
 
-  // Remove from waiting queue
   const q = waiting[user.server];
   if (q) {
     const i = q.indexOf(socket.id);
     if (i !== -1) q.splice(i, 1);
   }
 
-  // Notify partner if exists
   if (user.partner) {
     const p = users[user.partner];
     if (p) {
       p.partner = null;
       p.matched = false;
 
-      const partnerName = user.name || "Anonim"; // use name or "Anonim"
+      const partnerName = user.name || "Anonim"; 
       io.to(user.partner).emit("message", {
-        text: `${partnerName} keluar dari chat`, // dynamic name
+        text: `${partnerName} keluar dari chat`, 
         time: timeNow()
       });
 
@@ -96,9 +89,7 @@ socket.on("disconnect", () => {
 
   delete users[socket.id];
 });
-
 });
-
 
 function tryMatch(socket, serverName) {
   const queue = waiting[serverName];
