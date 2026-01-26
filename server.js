@@ -48,17 +48,18 @@ io.on("connection", socket => {
   }
 
   users[socket.id] = {
-    id: socket.id,
-    name: data.name,
-    age: data.age,
-    gender: data.gender,
-    job: data.job,
-    server: data.server,
-    photo: "",
-    location: "",
-    partner: null,
-    matched: false
-  };
+  id: socket.id,
+  name: data.name,
+  age: data.age,
+  gender: data.gender,
+  job: data.job,
+  server: data.server,
+  photo: "",
+  location: "",
+  partner: null,
+  matched: false,
+  callActive: false 
+};
 
   socket.join(data.server);
   tryMatch(socket, data.server);
@@ -80,7 +81,7 @@ io.on("connection", socket => {
 
 socket.on("call-user", () => {
   const user = users[socket.id];
-  if (!user || !user.partner) return;
+  if (!user || !user.partner || !user.matched) return;
 
   io.to(user.partner).emit("incoming-call", {
     from: socket.id,
@@ -92,6 +93,9 @@ socket.on("accept-call", () => {
   const user = users[socket.id];
   if (!user || !user.partner) return;
 
+  user.callActive = true;
+  users[user.partner].callActive = true;
+
   io.to(user.partner).emit("call-accepted");
 });
 
@@ -99,19 +103,24 @@ socket.on("reject-call", () => {
   const user = users[socket.id];
   if (!user || !user.partner) return;
 
+  user.callActive = false;
+  if (users[user.partner]) {
+    users[user.partner].callActive = false;
+  }
+
   io.to(user.partner).emit("call-rejected");
 });
 
 socket.on("offer", offer => {
   const user = users[socket.id];
-  if (!user || !user.partner) return;
+  if (!user || !user.partner || !user.callActive) return;
 
   io.to(user.partner).emit("offer", offer);
 });
 
 socket.on("answer", answer => {
   const user = users[socket.id];
-  if (!user || !user.partner) return;
+  if (!user || !user.partner || !user.callActive) return;
 
   io.to(user.partner).emit("answer", answer);
 });
@@ -126,6 +135,11 @@ socket.on("ice", candidate => {
 socket.on("end-call", () => {
   const user = users[socket.id];
   if (!user || !user.partner) return;
+
+  user.callActive = false;
+  if (users[user.partner]) {
+    users[user.partner].callActive = false;
+  }
 
   io.to(user.partner).emit("end-call");
 });
@@ -151,7 +165,10 @@ socket.on("disconnect", () => {
         text: `${partnerName} keluar dari chat`, 
         time: timeNow()
       });
-
+       
+      if (user.partner && users[user.partner]) {
+        io.to(user.partner).emit("end-call"); 
+      }
       io.to(user.partner).emit("partner-left");
     }
   }
