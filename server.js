@@ -31,22 +31,39 @@ io.on("connection", socket => {
   });
 
   socket.on("join", data => {
-    users[socket.id] = {
-      id: socket.id,
-      name: data.name,
-      age: data.age,
-      gender: data.gender,
-      job: data.job,
-      server: data.server,
-      photo: data.photo || "",
-      location: data.location || "",
-      partner: null,
-      matched: false
-    };
 
-    socket.join(data.server);
-    tryMatch(socket, data.server);
-  });
+  const old = users[socket.id];
+  if (old) {
+    const q = waiting[old.server];
+    if (q) {
+      const i = q.indexOf(socket.id);
+      if (i !== -1) q.splice(i, 1);
+    }
+
+    if (old.partner && users[old.partner]) {
+      users[old.partner].partner = null;
+      users[old.partner].matched = false;
+      io.to(old.partner).emit("partner-left");
+    }
+  }
+
+  users[socket.id] = {
+    id: socket.id,
+    name: data.name,
+    age: data.age,
+    gender: data.gender,
+    job: data.job,
+    server: data.server,
+    photo: "",
+    location: "",
+    partner: null,
+    matched: false
+  };
+
+  socket.join(data.server);
+  tryMatch(socket, data.server);
+});
+
 
   socket.on("message", text => {
     const user = users[socket.id];
@@ -60,6 +77,58 @@ io.on("connection", socket => {
       time: timeNow()
     });
   });
+
+socket.on("call-user", () => {
+  const user = users[socket.id];
+  if (!user || !user.partner) return;
+
+  io.to(user.partner).emit("incoming-call", {
+    from: socket.id,
+    name: user.name
+  });
+});
+
+socket.on("accept-call", () => {
+  const user = users[socket.id];
+  if (!user || !user.partner) return;
+
+  io.to(user.partner).emit("call-accepted");
+});
+
+socket.on("reject-call", () => {
+  const user = users[socket.id];
+  if (!user || !user.partner) return;
+
+  io.to(user.partner).emit("call-rejected");
+});
+
+socket.on("offer", offer => {
+  const user = users[socket.id];
+  if (!user || !user.partner) return;
+
+  io.to(user.partner).emit("offer", offer);
+});
+
+socket.on("answer", answer => {
+  const user = users[socket.id];
+  if (!user || !user.partner) return;
+
+  io.to(user.partner).emit("answer", answer);
+});
+
+socket.on("ice", candidate => {
+  const user = users[socket.id];
+  if (!user || !user.partner) return;
+
+  io.to(user.partner).emit("ice", candidate);
+});
+
+socket.on("end-call", () => {
+  const user = users[socket.id];
+  if (!user || !user.partner) return;
+
+  io.to(user.partner).emit("end-call");
+});
 
 socket.on("disconnect", () => {
   const user = users[socket.id];
@@ -115,9 +184,10 @@ function tryMatch(socket, serverName) {
     return;
   }
 
-  waiting[serverName].push(socket.id);
-  console.log("waiting", socket.id, "in", serverName);
-}
+  if (!waiting[serverName].includes(socket.id)) {
+    waiting[serverName].push(socket.id);
+  }
+} 
 
 function timeNow() {
   const d = new Date();
