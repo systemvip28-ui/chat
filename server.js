@@ -111,6 +111,13 @@ socket.on("reject-call", () => {
   io.to(user.partner).emit("call-rejected");
 });
 
+socket.on("media-status", status => {
+  const partnerSocket = getPartnerSocket(socket.id);
+  if (partnerSocket) {
+    partnerSocket.emit("partner-media-status", status);
+  }
+});
+
 socket.on("offer", offer => {
   const user = users[socket.id];
   if (!user || !user.partner || !user.callActive) return;
