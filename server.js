@@ -3,56 +3,28 @@ const http = require("http");
 const { Server } = require("socket.io");
 const path = require("path");
 const multer = require("multer");
-const fs = require("fs");
+const cloudinary = require("cloudinary").v2;
+const { CloudinaryStorage } = require("multer-storage-cloudinary");
 
-// ================================================
-// KONFIGURASI UPLOAD - PILIH SALAH SATU SESUAI SETUP RENDER KAMU
-// ================================================
+// Konfigurasi Cloudinary - GANTI DENGAN MILIKMU
+cloudinary.config({
+  cloud_name: "davgb7tjm",      // contoh: dxyz12345
+  api_key: "211214865765642",            // contoh: 123456789012345
+  api_secret: "3OG8-xUQlkYGt1uYO7yrPVoPFCo"       // contoh: abcdefghijklmnopqrstuvwxyz
+});
 
-// === OPSI 1: Pakai Render Disk (Persistent) - DIREKOMENDASIKAN ===
-// 1. Di dashboard Render → Service → Disks → Add Disk
-//    - Name: uploads
-//    - Mount path: /app/uploads
-//    - Size: minimal 1 GB
-// Setelah itu gunakan kode ini:
-
-const UPLOAD_DIR = '/app/uploads';  // ← path di Render Disk
-
-// Pastikan folder ada (Render Disk biasanya sudah ada, tapi aman dicek)
-if (!fs.existsSync(UPLOAD_DIR)) {
-  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
-}
-
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, UPLOAD_DIR);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-    const ext = path.extname(file.originalname);
-    cb(null, uniqueSuffix + ext);
+const storage = new CloudinaryStorage({
+  cloudinary: cloudinary,
+  params: {
+    folder: "chat-random",                     // folder di Cloudinary (bisa diganti)
+    allowed_formats: ["jpg", "png", "jpeg", "gif", "mp4", "webm", "3gp"],
+    resource_type: "auto"                      // auto detect image/video
   }
 });
 
-// === OPSI 2: Memory storage (jika belum pakai Disk) - hanya sementara ===
-// const storage = multer.memoryStorage();
-
-// ================================================
-
 const upload = multer({
   storage: storage,
-  limits: { fileSize: 15 * 1024 * 1024 }, // 15MB (sesuaikan kebutuhan)
-  fileFilter: (req, file, cb) => {
-    const allowedTypes = [
-      'image/jpeg', 'image/png', 'image/gif', 'image/webp',
-      'video/mp4', 'video/webm', 'video/3gpp'
-    ];
-    if (allowedTypes.includes(file.mimetype)) {
-      cb(null, true);
-    } else {
-      cb(new Error('Hanya gambar dan video yang diperbolehkan'), false);
-    }
-  }
+  limits: { fileSize: 15 * 1024 * 1024 }       // 15MB max
 });
 
 const app = express();
@@ -65,20 +37,19 @@ const io = new Server(server, {
   }
 });
 
-// Simpan antrian matching
+// Simpan antrian per server
 const waiting = {
   server1: [],
   server2: [],
   server3: []
 };
 
-// Data user aktif
+// Data user
 const users = {};
 
 // Simpan pesan per room (untuk delete-for-everyone)
 const messages = {};
 
-// Helper
 function getRoomId(id1, id2) {
   return [id1, id2].sort().join("-");
 }
@@ -88,52 +59,36 @@ function timeNow() {
   return d.getHours().toString().padStart(2, "0") + ":" + d.getMinutes().toString().padStart(2, "0");
 }
 
-// ─── ROUTE UPLOAD FILE ───────────────────────────────────────
+// ─── ROUTE UPLOAD FILE (ke Cloudinary) ───────────────────────────────
 app.post("/upload", (req, res) => {
-  console.log("[UPLOAD] Request diterima dari:", req.ip);
+  console.log("[UPLOAD] Request diterima");
 
   upload.single("file")(req, res, (err) => {
     if (err instanceof multer.MulterError) {
-      console.error("[UPLOAD ERROR] Multer:", err);
+      console.error("[MULTER ERROR]", err);
       return res.status(400).json({ error: err.message });
     }
     if (err) {
-      console.error("[UPLOAD ERROR]:", err.message);
+      console.error("[UPLOAD ERROR]", err.message);
       return res.status(400).json({ error: err.message });
     }
 
     if (!req.file) {
-      console.log("[UPLOAD] Tidak ada file");
       return res.status(400).json({ error: "Tidak ada file yang diupload" });
     }
 
-    let fileUrl;
-
-    // Jika pakai disk storage (Render Disk)
-    if (req.file.path) {
-      fileUrl = `/uploads/${req.file.filename}`;
-      console.log("[UPLOAD BERHASIL] File disimpan di:", req.file.path);
-    }
-    // Jika memory storage (fallback)
-    else if (req.file.buffer) {
-      // Contoh: simpan sementara atau kirim ke cloud nanti
-      // Untuk sementara kita return buffer length saja (demo)
-      fileUrl = `/temp/${Date.now()}-${req.file.originalname}`;
-      console.log("[MEMORY UPLOAD] File diterima (memory), ukuran:", req.file.size);
-      // Di production → upload ke Cloudinary/S3 di sini
-    }
+    // URL permanen dari Cloudinary (HTTPS otomatis)
+    const fileUrl = req.file.path;  // atau req.file.secure_url jika mau eksplisit HTTPS
+    console.log("[UPLOAD SUKSES] URL Cloudinary:", fileUrl);
 
     res.json({ url: fileUrl });
   });
 });
 
-// Serve file yang diupload (hanya berlaku jika pakai disk)
-app.use("/uploads", express.static(UPLOAD_DIR));
-
-// Jika frontend HTML ada di folder public
+// Jika frontend HTML ada di public (opsional)
 app.use(express.static(path.join(__dirname, "public")));
 
-// ─── SOCKET.IO ───────────────────────────────────────────────
+// ─── SOCKET.IO ───────────────────────────────────────────────────────
 io.on("connection", (socket) => {
   console.log("New connection:", socket.id);
 
@@ -143,7 +98,6 @@ io.on("connection", (socket) => {
   });
 
   socket.on("join", (data) => {
-    // Cleanup jika reconnect
     if (users[socket.id]) {
       const old = users[socket.id];
       const q = waiting[old.server];
@@ -217,7 +171,7 @@ io.on("connection", (socket) => {
     }
   });
 
-  // ─── Video Call ──────────────────────────────────────────────
+  // Video Call Signaling
   socket.on("call-user", () => {
     const user = users[socket.id];
     if (user?.partner && user.matched) {
