@@ -281,6 +281,18 @@ io.on('connection', (socket) => {
     if (p) p.emit('ice', candidate);
   });
 
+socket.on('media-status', (status) => {
+  // status = { cam: true/false, mic: true/false }
+  const partner = getPartner(socket.id);
+  if (partner) {
+    // Forward status ke partner saja
+    partner.emit('media-status', status);
+    
+    // Optional: log untuk debug
+    console.log(`Media status dari ${socket.id} → ${partner.id}: cam=${status.cam}, mic=${status.mic}`);
+  }
+});
+
   socket.on('end-call', () => {
     if (recentlyEndedCalls.has(socket.id)) return;
     recentlyEndedCalls.add(socket.id);
