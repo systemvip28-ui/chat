@@ -108,9 +108,24 @@ io.on('connection', (socket) => {
   console.log(`Connected: ${socket.id}`);
 
   socket.on('join', (data) => {
-    if (!data?.server || !data?.gender || !data?.job) return;
-    userInfo.set(socket.id, data);
-    waitingUsers.set(socket.id, { socket, info: data });
+    if (!data?.server) {
+      console.log(`Join ditolak dari ${socket.id} - server tidak ada`);
+      socket.emit('error', { message: 'Server harus dipilih' });
+      return;
+    }
+
+    const userData = {
+      name:   data.name   ? String(data.name).trim()   : 'Anonim',
+      age:    data.age    ? Number(data.age)           : null,
+      gender: data.gender ? String(data.gender).trim() : '-',
+      job:    data.job    ? String(data.job).trim()    : '-',
+      server: data.server,
+    };
+
+    userInfo.set(socket.id, userData);
+    waitingUsers.set(socket.id, { socket, info: userData });
+
+    console.log(`User join: ${socket.id} | ${userData.name} | server: ${userData.server}`);
 
     tryMatchWaiting();
   });
@@ -281,17 +296,13 @@ io.on('connection', (socket) => {
     if (p) p.emit('ice', candidate);
   });
 
-socket.on('media-status', (status) => {
-  // status = { cam: true/false, mic: true/false }
-  const partner = getPartner(socket.id);
-  if (partner) {
-    // Forward status ke partner saja
-    partner.emit('media-status', status);
-    
-    // Optional: log untuk debug
-    console.log(`Media status dari ${socket.id} → ${partner.id}: cam=${status.cam}, mic=${status.mic}`);
-  }
-});
+  socket.on('media-status', (status) => {
+    const partner = getPartner(socket.id);
+    if (partner) {
+      partner.emit('media-status', status);
+      console.log(`Media status dari ${socket.id} → ${partner.id}: cam=${status.cam}, mic=${status.mic}`);
+    }
+  });
 
   socket.on('end-call', () => {
     if (recentlyEndedCalls.has(socket.id)) return;
