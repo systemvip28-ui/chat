@@ -261,7 +261,7 @@ io.on('connection', (socket) => {
 
     const p = getPartner(socket.id);
     if (p) {
-      sendSystemMsg(socket.id, `${getDisplayName(socket.id)} menutup panggilan`);
+      sendSystemMsg(socket.id, `Panggilan berakhir`);
       p.emit('end-call');
     }
 
