@@ -2,9 +2,16 @@ const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
-const multer = require('multer');
-const fs = require('fs');
 const { v4: uuidv4 } = require('uuid');
+const cloudinary = require('cloudinary').v2;
+
+// ─── CLOUDINARY CONFIG HARD-CODED (GANTI DENGAN PUNYA KAMU) ──────────────────
+cloudinary.config({
+  cloud_name:     'davgb7tjm',                  // ganti kalau beda
+  api_key:        '211214865765642',            // GANTI DENGAN API KEY ASLI KAMU
+  api_secret:     '3OG8-xUQlkYGt1uYO7yrPVoPFCo',  // GANTI DENGAN SECRET ASLI KAMU
+  secure: true
+});
 
 const app = express();
 const server = http.createServer(app);
@@ -12,36 +19,11 @@ const io = new Server(server, {
   cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
-// ─── UPLOAD CONFIG ─────────────────────────────────────────────────────────────
-const uploadDir = './public/uploads';
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
+// Middleware untuk parse JSON besar (penting untuk kirim buffer via socket)
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, uploadDir),
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    cb(null, `${Date.now()}-${Math.random().toString(36).slice(2,10)}${ext}`);
-  }
-});
-
-const upload = multer({
-  storage,
-  limits: { fileSize: 10 * 1024 * 1024 },
-  fileFilter: (req, file, cb) => {
-    if (file.mimetype.startsWith('image/')) cb(null, true);
-    else cb(new Error('Hanya gambar'), false);
-  }
-});
-
-app.post('/upload', upload.single('file'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'Tidak ada file' });
-  const url = `/uploads/${req.file.filename}`;
-  res.json({ url });
-});
-
-app.use('/uploads', express.static(uploadDir));
+// Serve static files (misal HTML client kalau deploy bersama)
 app.use(express.static('public'));
 
 // ─── DATA ──────────────────────────────────────────────────────────────────────
@@ -158,10 +140,7 @@ io.on('connection', (socket) => {
 
     console.log(`Pesan dikirim ke pair: ${socket.id} → ${partner.id} | ID: ${messageId}`);
 
-    // HANYA KIRIM KE PENERIMA (partner) → menghilangkan duplikat di pengirim
     partner.emit('message', fullMessage);
-
-    // Kirim konfirmasi ID ke pengirim (untuk update optimistic UI kalau perlu)
     socket.emit('message-confirmed', { id: messageId });
   });
 
@@ -171,7 +150,6 @@ io.on('connection', (socket) => {
 
     console.log(`Hapus untuk semua: ${msgId} dari ${socket.id}`);
 
-    // Broadcast ke kedua sisi
     socket.emit('delete-for-everyone', { msgId });
     partner.emit('delete-for-everyone', { msgId });
   });
@@ -179,6 +157,64 @@ io.on('connection', (socket) => {
   socket.on('typing', () => {
     const p = getPartner(socket.id);
     if (p) p.emit('typing');
+  });
+
+  // ─── UPLOAD GAMBAR KE CLOUDINARY VIA SOCKET ────────────────────────────────
+  socket.on('upload-file', async (data, callback) => {
+    const { buffer, filename, mimetype, caption, viewOnce } = data;
+
+    if (!buffer || !filename || !mimetype?.startsWith('image/')) {
+      return callback?.({ success: false, error: 'Data file tidak valid' });
+    }
+
+    try {
+      if (buffer.length > 10 * 1024 * 1024) {
+        return callback?.({ success: false, error: 'File terlalu besar (maks 10MB)' });
+      }
+
+      const uploadResult = await new Promise((resolve, reject) => {
+        const uploadStream = cloudinary.uploader.upload_stream(
+          {
+            resource_type: 'image',
+            folder: 'sanz-chat',
+            public_id: `${Date.now()}-${uuidv4().slice(0, 8)}`,
+            overwrite: true,
+            format: path.extname(filename).slice(1) || 'jpg'
+          },
+          (error, result) => {
+            if (error) return reject(error);
+            resolve(result);
+          }
+        );
+
+        uploadStream.end(Buffer.from(buffer));
+      });
+
+      const imageUrl = uploadResult.secure_url;
+
+      const partner = getPartner(socket.id);
+      if (partner) {
+        const messageId = uuidv4();
+        const fileMsg = {
+          id: messageId,
+          type: 'file',
+          fileUrl: imageUrl,
+          caption: caption || '',
+          viewOnce: !!viewOnce,
+          timestamp: Date.now(),
+          from: socket.id
+        };
+
+        partner.emit('message', fileMsg);
+        socket.emit('message-confirmed', { id: messageId });
+      }
+
+      callback?.({ success: true, url: imageUrl });
+
+    } catch (err) {
+      console.error('Cloudinary upload gagal:', err.message || err);
+      callback?.({ success: false, error: 'Gagal upload gambar ke Cloudinary' });
+    }
   });
 
   // ─── VIDEO CALL ───────────────────────────────────────────────────────────────
