@@ -4,6 +4,7 @@ const { Server } = require('socket.io');
 const path = require('path');
 const multer = require('multer');
 const fs = require('fs');
+const { v4: uuidv4 } = require('uuid');  // ← tambahan untuk ID unik
 
 const app = express();
 const server = http.createServer(app);
@@ -12,7 +13,6 @@ const io = new Server(server, {
 });
 
 // ─── UPLOAD CONFIG ─────────────────────────────────────────────────────────────
-// Route /upload HARUS di atas semua static middleware
 const uploadDir = './public/uploads';
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
@@ -44,7 +44,7 @@ app.use(express.static('public'));
 
 // ─── DATA ──────────────────────────────────────────────────────────────────────
 const waitingUsers = new Map();
-const pairs = new Map();
+const pairs = new Map();                // socket.id → partner socket.id
 const userInfo = new Map();
 const activeCalls = new Map();          // callerId → {to: partnerId, timeout}
 const recentlyEndedCalls = new Set();   // cegah spam "menutup panggilan"
@@ -55,15 +55,23 @@ function getDisplayName(id) {
   return info?.name?.trim() && info.name.trim() !== '' ? info.name.trim() : 'Pengguna';
 }
 
-function getPartner(id) {
-  const pid = pairs.get(id);
-  return pid ? io.sockets.sockets.get(pid) : null;
+function getPartner(socketId) {
+  const partnerId = pairs.get(socketId);
+  return partnerId ? io.sockets.sockets.get(partnerId) : null;
+}
+
+function getRoom(socketId) {
+  // Karena kita pakai 1:1 pair, room bisa dianggap sebagai kombinasi kedua ID
+  const partnerId = pairs.get(socketId);
+  if (!partnerId) return null;
+  // Buat room name unik (urutan ID lebih kecil dulu)
+  return [socketId, partnerId].sort().join('-');
 }
 
 function sendSystemMsg(fromId, text) {
-  const p = getPartner(fromId);
-  if (p) {
-    p.emit('message', {
+  const partner = getPartner(fromId);
+  if (partner) {
+    partner.emit('message', {
       id: 'sys-' + Date.now(),
       type: 'text',
       text,
@@ -135,34 +143,45 @@ io.on('connection', (socket) => {
     userInfo.set(socket.id, data);
     waitingUsers.set(socket.id, { socket, info: data });
 
-    const partner = findPartnerFor(socket);
-    if (partner) {
-      const me = userInfo.get(socket.id);
-      pairs.set(socket.id, partner.socket.id);
-      pairs.set(partner.socket.id, socket.id);
-
-      socket.emit('matched', partner.info);
-      partner.socket.emit('matched', me);
-
-      waitingUsers.delete(socket.id);
-      waitingUsers.delete(partner.socket.id);
-    } else {
-      tryMatchWaiting();
-    }
+    tryMatchWaiting();
   });
 
-  function findPartnerFor(socket) {
-    const my = userInfo.get(socket.id);
-    if (!my) return null;
-    for (const [id, e] of waitingUsers.entries()) {
-      if (id !== socket.id && e.info.server === my.server) return e;
+  socket.on('message', (msgData) => {
+    const partner = getPartner(socket.id);
+    if (!partner) {
+      console.log(`Pesan dari ${socket.id} tidak dikirim: tidak ada partner`);
+      return;
     }
-    return null;
-  }
 
-  socket.on('message', msg => {
-    const p = getPartner(socket.id);
-    if (p) p.emit('message', { ...msg, timestamp: Date.now() });
+    // Buat ID unik di server
+    const messageId = uuidv4();
+
+    // Pesan lengkap yang akan dikirim ke kedua sisi
+    const fullMessage = {
+      id: messageId,
+      ...msgData,                    // type, text / fileUrl, caption, viewOnce, dll
+      timestamp: Date.now(),
+      from: socket.id                // opsional, bisa digunakan client untuk tahu sisi "me"
+    };
+
+    console.log(`Pesan dikirim ke pair: ${socket.id} → ${partner.id} | ID: ${messageId}`);
+
+    // Kirim ke pengirim (update optimistic UI dengan ID resmi)
+    socket.emit('message', fullMessage);
+
+    // Kirim ke penerima
+    partner.emit('message', fullMessage);
+  });
+
+  socket.on('delete-for-everyone', ({ msgId }) => {
+    const partner = getPartner(socket.id);
+    if (!partner) return;
+
+    console.log(`Hapus untuk semua: ${msgId} dari ${socket.id}`);
+
+    // Broadcast ke kedua sisi (pengirim & penerima)
+    socket.emit('delete-for-everyone', { msgId });
+    partner.emit('delete-for-everyone', { msgId });
   });
 
   socket.on('typing', () => {
@@ -192,7 +211,7 @@ io.on('connection', (socket) => {
     activeCalls.set(socket.id, { to: partner.id, timeout });
 
     partner.emit('incoming-call', { name: getDisplayName(socket.id) });
-    socket.emit('call-sent');  // konfirmasi ke pemanggil bahwa panggilan terkirim
+    socket.emit('call-sent');  // konfirmasi ke pemanggil
   });
 
   socket.on('accept-call', () => {
@@ -255,7 +274,6 @@ io.on('connection', (socket) => {
       p.emit('end-call');
     }
 
-    // bersihkan activeCalls kalau ada
     activeCalls.delete(socket.id);
   });
 
