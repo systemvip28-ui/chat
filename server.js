@@ -1,150 +1,244 @@
-const express = require("express");
-const http = require("http");
-const { Server } = require("socket.io");
-const multer = require("multer");
-const cloudinary = require("cloudinary").v2;
-const { CloudinaryStorage } = require("multer-storage-cloudinary");
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+const path = require('path');
+const multer = require('multer');
+const fs = require('fs');
 
-cloudinary.config({
-  cloud_name: "davgb7tjm",
-  api_key: "211214865765642",
-  api_secret: "3OG8-xUQlkYGt1uYO7yrPVoPFCo"
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
 });
 
-const storage = new CloudinaryStorage({
-  cloudinary: cloudinary,
-  params: {
-    folder: "chat-random",
-    allowed_formats: ["jpg", "png", "jpeg", "gif", "mp4", "webm"],
-    resource_type: "auto"
+// ─── Multer untuk upload gambar ────────────────────────────────
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dir = './public/uploads';
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    cb(null, `${Date.now()}-${Math.random().toString(36).slice(2, 8)}${ext}`);
   }
 });
 
 const upload = multer({
   storage,
-  limits: { fileSize: 15 * 1024 * 1024 } // 15MB
-});
-
-const app = express();
-const server = http.createServer(app);
-const io = new Server(server, {
-  cors: { origin: "*", methods: ["GET", "POST"] }
-});
-
-const waiting = { server1: [], server2: [], server3: [] };
-const users = {};
-
-function getRoomId(a, b) {
-  return [a, b].sort().join("-");
-}
-
-function timeNow() {
-  const d = new Date();
-  return d.getHours().toString().padStart(2,"0") + ":" + d.getMinutes().toString().padStart(2,"0");
-}
-
-// Upload endpoint
-app.post("/upload", (req, res) => {
-  upload.single("file")(req, res, err => {
-    if (err) {
-      console.error("Upload error:", err);
-      return res.status(400).json({ error: err.message });
-    }
-    if (!req.file) return res.status(400).json({ error: "No file" });
-    res.json({ url: req.file.path });
-  });
-});
-
-io.on("connection", socket => {
-  console.log("Client connected:", socket.id);
-
-  socket.on("join", data => {
-    if (users[socket.id]) {
-      const old = users[socket.id];
-      if (old.partner && users[old.partner]) {
-        users[old.partner].partner = null;
-        io.to(old.partner).emit("partner-left");
-      }
-    }
-
-    users[socket.id] = {
-      ...data,
-      id: socket.id,
-      partner: null,
-      matched: false
-    };
-
-    tryMatch(socket, data.server);
-  });
-
-  socket.on("typing", () => {
-    const user = users[socket.id];
-    if (user?.partner) {
-      socket.to(user.partner).emit("typing");
-    }
-  });
-
-  socket.on("message", payload => {
-    const user = users[socket.id];
-    if (!user?.partner) return;
-
-    const msg = {
-      ...payload,
-      sender: socket.id,
-      time: payload.time || timeNow()
-    };
-
-    // Kirim ke partner
-    socket.to(user.partner).emit("message", msg);
-    // Kirim balik ke pengirim (agar muncul di layar sendiri)
-    socket.emit("message", msg);
-
-    console.log(`Pesan dari ${user.name} ke ${users[user.partner]?.name || "?"}`);
-  });
-
-  socket.on("disconnect", () => {
-    const user = users[socket.id];
-    if (!user) return;
-
-    if (user.partner && users[user.partner]) {
-      users[user.partner].partner = null;
-      io.to(user.partner).emit("partner-left");
-    }
-
-    // Hapus dari antrian jika masih menunggu
-    const q = waiting[user.server];
-    if (q) {
-      const idx = q.indexOf(socket.id);
-      if (idx !== -1) q.splice(idx, 1);
-    }
-
-    delete users[socket.id];
-    console.log("Client disconnected:", socket.id);
-  });
-});
-
-function tryMatch(socket, serverName) {
-  const queue = waiting[serverName] = waiting[serverName] || [];
-
-  while (queue.length > 0) {
-    const pid = queue.shift();
-    if (!users[pid] || users[pid].matched) continue;
-
-    users[socket.id].partner = pid;
-    users[socket.id].matched = true;
-    users[pid].partner = socket.id;
-    users[pid].matched = true;
-
-    socket.emit("matched", users[pid]);
-    io.to(pid).emit("matched", users[socket.id]);
-
-    console.log(`Match: ${socket.id} <-> ${pid} (${serverName})`);
-    return;
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) cb(null, true);
+    else cb(new Error('Hanya gambar yang diperbolehkan'), false);
   }
+});
 
-  if (!queue.includes(socket.id)) queue.push(socket.id);
+app.use('/uploads', express.static('public/uploads'));
+app.use(express.static('public')); // jika kamu taruh index.html di folder public
+
+// ─── Struktur data ─────────────────────────────────────────────
+const waitingUsers = new Map();       // server → user socket
+const pairs = new Map();              // socket.id → partner socket.id
+const userInfo = new Map();           // socket.id → {name, age, gender, job, server}
+const activeCalls = new Map();        // callerId → {to: socketId, timeout?}
+
+function findPartnerFor(socket) {
+  for (const [id, user] of waitingUsers.entries()) {
+    if (id !== socket.id && user.server === userInfo.get(socket.id)?.server) {
+      return { socket: user.socket, info: user.info };
+    }
+  }
+  return null;
 }
 
+function getPartner(socketId) {
+  const partnerId = pairs.get(socketId);
+  if (!partnerId) return null;
+  return io.sockets.sockets.get(partnerId);
+}
+
+function cleanUp(socket) {
+  const partnerSocket = getPartner(socket.id);
+  if (partnerSocket) {
+    partnerSocket.emit('partner-left');
+    pairs.delete(partnerSocket.id);
+  }
+  pairs.delete(socket.id);
+  waitingUsers.delete(socket.id);
+  userInfo.delete(socket.id);
+
+  // bersihkan call yang tertinggal
+  for (const [callerId, call] of activeCalls.entries()) {
+    if (call.to === socket.id || callerId === socket.id) {
+      if (call.timeout) clearTimeout(call.timeout);
+      activeCalls.delete(callerId);
+      const other = io.sockets.sockets.get(callerId === socket.id ? call.to : callerId);
+      if (other) other.emit('call-rejected', { reason: 'partner disconnected' });
+    }
+  }
+}
+
+// ─── Socket logic ──────────────────────────────────────────────
+io.on('connection', (socket) => {
+  console.log(`User connected: ${socket.id}`);
+
+  socket.on('join', (data) => {
+    userInfo.set(socket.id, data);
+
+    const existing = findPartnerFor(socket);
+    if (existing) {
+      // ketemu pasangan
+      const me = userInfo.get(socket.id);
+      const partner = existing.info;
+
+      pairs.set(socket.id, existing.socket.id);
+      pairs.set(existing.socket.id, socket.id);
+
+      socket.emit('matched', partner);
+      existing.socket.emit('matched', me);
+
+      waitingUsers.delete(socket.id);
+      waitingUsers.delete(existing.socket.id);
+    } else {
+      // masuk antrian
+      waitingUsers.set(socket.id, {
+        socket,
+        info: data
+      });
+    }
+  });
+
+  // ── Pesan teks ──
+  socket.on('message', (msg) => {
+    const partner = getPartner(socket.id);
+    if (partner) {
+      partner.emit('message', {
+        ...msg,
+        from: socket.id,
+        timestamp: Date.now()
+      });
+    }
+  });
+
+  // ── Typing indicator ──
+  socket.on('typing', () => {
+    const partner = getPartner(socket.id);
+    if (partner) partner.emit('typing');
+  });
+
+  // ── Upload gambar ──
+  socket.on('upload-file', (meta, callback) => {
+    callback({ status: 'ready' });
+  });
+
+  app.post('/upload', upload.single('file'), (req, res) => {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Upload gagal' });
+    }
+    const url = `/uploads/${req.file.filename}`;
+    res.json({ url });
+  });
+
+  // ── View once logic (server hanya forward, client handle hapus) ──
+  socket.on('message', (msg) => {
+    if (msg.type === 'file' && msg.viewOnce) {
+      // Bisa ditambahkan logic hapus file setelah X waktu / setelah dilihat
+      // Untuk sekarang: client yang handle auto delete setelah dilihat
+    }
+    const partner = getPartner(socket.id);
+    if (partner) partner.emit('message', msg);
+  });
+
+  socket.on('delete-for-everyone', ({ msgId }) => {
+    const partner = getPartner(socket.id);
+    if (partner) {
+      partner.emit('delete-for-everyone', { msgId });
+    }
+    // Jika ingin hapus file juga (khusus view-once), bisa ditambahkan disini
+  });
+
+  // ── Video Call Signaling ───────────────────────────────────
+  socket.on('call-user', ({ name }) => {
+    const partner = getPartner(socket.id);
+    if (!partner) return;
+
+    activeCalls.set(socket.id, {
+      to: partner.id,
+      timeout: setTimeout(() => {
+        socket.emit('call-timeout');
+        activeCalls.delete(socket.id);
+      }, 30000)
+    });
+
+    partner.emit('incoming-call', { name: userInfo.get(socket.id)?.name || 'Seseorang' });
+  });
+
+  socket.on('accept-call', () => {
+    const callerId = [...activeCalls.entries()].find(([k, v]) => v.to === socket.id)?.[0];
+    if (!callerId) return;
+
+    const callerSocket = io.sockets.sockets.get(callerId);
+    if (callerSocket) {
+      clearTimeout(activeCalls.get(callerId).timeout);
+      activeCalls.delete(callerId);
+      callerSocket.emit('call-accepted');
+    }
+  });
+
+  socket.on('reject-call', () => {
+    const callerId = [...activeCalls.entries()].find(([k, v]) => v.to === socket.id)?.[0];
+    if (callerId) {
+      clearTimeout(activeCalls.get(callerId).timeout);
+      activeCalls.delete(callerId);
+      const caller = io.sockets.sockets.get(callerId);
+      if (caller) caller.emit('call-rejected');
+    }
+  });
+
+  socket.on('cancel-call', () => {
+    if (activeCalls.has(socket.id)) {
+      clearTimeout(activeCalls.get(socket.id).timeout);
+      activeCalls.delete(socket.id);
+    }
+  });
+
+  // WebRTC signaling
+  socket.on('offer', (offer) => {
+    const partner = getPartner(socket.id);
+    if (partner) partner.emit('offer', offer);
+  });
+
+  socket.on('answer', (answer) => {
+    const partner = getPartner(socket.id);
+    if (partner) partner.emit('answer', answer);
+  });
+
+  socket.on('ice', (candidate) => {
+    const partner = getPartner(socket.id);
+    if (partner) partner.emit('ice', candidate);
+  });
+
+  socket.on('end-call', () => {
+    const partner = getPartner(socket.id);
+    if (partner) partner.emit('end-call');
+  });
+
+  socket.on('media-status', (status) => {
+    const partner = getPartner(socket.id);
+    if (partner) partner.emit('media-status', status);
+  });
+
+  // ── Disconnect ───────────────────────────────────────────────
+  socket.on('disconnect', () => {
+    console.log(`User disconnected: ${socket.id}`);
+    cleanUp(socket);
+  });
+});
+
+// Jalankan server
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`Server berjalan di port ${PORT}`);
