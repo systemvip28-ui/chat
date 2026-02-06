@@ -5,11 +5,10 @@ const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const cloudinary = require('cloudinary').v2;
 
-// ─── CLOUDINARY CONFIG HARD-CODED (GANTI DENGAN PUNYA KAMU) ──────────────────
 cloudinary.config({
-  cloud_name:     'davgb7tjm',                  // ganti kalau beda
-  api_key:        '211214865765642',            // GANTI DENGAN API KEY ASLI KAMU
-  api_secret:     '3OG8-xUQlkYGt1uYO7yrPVoPFCo',  // GANTI DENGAN SECRET ASLI KAMU
+  cloud_name:     'davgb7tjm',        
+  api_key:        '211214865765642',          
+  api_secret:     '3OG8-xUQlkYGt1uYO7yrPVoPFCo',  
   secure: true
 });
 
@@ -19,21 +18,17 @@ const io = new Server(server, {
   cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
-// Middleware untuk parse JSON besar (penting untuk kirim buffer via socket)
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
-// Serve static files (misal HTML client kalau deploy bersama)
 app.use(express.static('public'));
 
-// ─── DATA ──────────────────────────────────────────────────────────────────────
 const waitingUsers = new Map();
-const pairs = new Map();                // socket.id → partner socket.id
+const pairs = new Map();                
 const userInfo = new Map();
-const activeCalls = new Map();          // callerId → {to: partnerId, timeout}
+const activeCalls = new Map();          
 const recentlyEndedCalls = new Set();
 
-// ─── HELPER ────────────────────────────────────────────────────────────────────
 function getDisplayName(id) {
   const info = userInfo.get(id);
   return info?.name?.trim() && info.name.trim() !== '' ? info.name.trim() : 'Pengguna';
@@ -71,7 +66,6 @@ function cleanUp(socket) {
   waitingUsers.delete(socket.id);
   userInfo.delete(socket.id);
 
-  // clean calls
   for (const [cid, call] of activeCalls.entries()) {
     if (cid === socket.id || call.to === socket.id) {
       if (call.timeout) clearTimeout(call.timeout);
@@ -110,7 +104,6 @@ function tryMatchWaiting() {
   }
 }
 
-// ─── SOCKET ────────────────────────────────────────────────────────────────────
 io.on('connection', (socket) => {
   console.log(`Connected: ${socket.id}`);
 
@@ -159,7 +152,6 @@ io.on('connection', (socket) => {
     if (p) p.emit('typing');
   });
 
-  // ─── UPLOAD GAMBAR KE CLOUDINARY VIA SOCKET ────────────────────────────────
   socket.on('upload-file', async (data, callback) => {
     const { buffer, filename, mimetype, caption, viewOnce } = data;
 
@@ -169,7 +161,7 @@ io.on('connection', (socket) => {
 
     try {
       if (buffer.length > 10 * 1024 * 1024) {
-        return callback?.({ success: false, error: 'File terlalu besar (maks 10MB)' });
+        return callback?.({ success: false, error: 'File terlalu besar maks 10MB' });
       }
 
       const uploadResult = await new Promise((resolve, reject) => {
@@ -217,7 +209,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // ─── VIDEO CALL ───────────────────────────────────────────────────────────────
   socket.on('call-user', () => {
     const partner = getPartner(socket.id);
     if (!partner) {
@@ -310,7 +301,6 @@ io.on('connection', (socket) => {
   });
 });
 
-// ─── START SERVER ──────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server berjalan di port ${PORT}`);
