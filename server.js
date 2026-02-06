@@ -158,9 +158,11 @@ io.on('connection', (socket) => {
 
     console.log(`Pesan dikirim ke pair: ${socket.id} → ${partner.id} | ID: ${messageId}`);
 
-    // Kirim ke kedua sisi dengan ID yang sama
-    socket.emit('message', fullMessage);
+    // HANYA KIRIM KE PENERIMA (partner) → menghilangkan duplikat di pengirim
     partner.emit('message', fullMessage);
+
+    // Kirim konfirmasi ID ke pengirim (untuk update optimistic UI kalau perlu)
+    socket.emit('message-confirmed', { id: messageId });
   });
 
   socket.on('delete-for-everyone', ({ msgId }) => {
@@ -169,6 +171,7 @@ io.on('connection', (socket) => {
 
     console.log(`Hapus untuk semua: ${msgId} dari ${socket.id}`);
 
+    // Broadcast ke kedua sisi
     socket.emit('delete-for-everyone', { msgId });
     partner.emit('delete-for-everyone', { msgId });
   });
