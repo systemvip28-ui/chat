@@ -1,6 +1,7 @@
 {
   "name": "chat-random-server",
   "version": "1.0.0",
+  "description": "Server untuk Chat Random dengan Socket.io",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -8,6 +9,10 @@
   "dependencies": {
     "express": "^4.19.2",
     "socket.io": "^4.7.5",
-    "multer": "^1.4.5-lts.1"
+    "multer": "^1.4.5-lts.1",
+    "uuid": "^10.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
