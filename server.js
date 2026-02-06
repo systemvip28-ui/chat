@@ -5,43 +5,54 @@ const path = require("path");
 const multer = require("multer");
 const fs = require("fs");
 
-// Pastikan folder uploads ada
-const uploadDir = path.join(__dirname, "public", "uploads");
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
+// ================================================
+// KONFIGURASI UPLOAD - PILIH SALAH SATU SESUAI SETUP RENDER KAMU
+// ================================================
+
+// === OPSI 1: Pakai Render Disk (Persistent) - DIREKOMENDASIKAN ===
+// 1. Di dashboard Render → Service → Disks → Add Disk
+//    - Name: uploads
+//    - Mount path: /app/uploads
+//    - Size: minimal 1 GB
+// Setelah itu gunakan kode ini:
+
+const UPLOAD_DIR = '/app/uploads';  // ← path di Render Disk
+
+// Pastikan folder ada (Render Disk biasanya sudah ada, tapi aman dicek)
+if (!fs.existsSync(UPLOAD_DIR)) {
+  fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 }
 
-// Konfigurasi multer (simpan file di folder public/uploads)
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    cb(null, uploadDir);
+    cb(null, UPLOAD_DIR);
   },
   filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
     const ext = path.extname(file.originalname);
     cb(null, uniqueSuffix + ext);
-  },
+  }
 });
+
+// === OPSI 2: Memory storage (jika belum pakai Disk) - hanya sementara ===
+// const storage = multer.memoryStorage();
+
+// ================================================
 
 const upload = multer({
   storage: storage,
-  limits: { fileSize: 10 * 1024 * 1024 }, // batas 10MB (ubah sesuai kebutuhan)
+  limits: { fileSize: 15 * 1024 * 1024 }, // 15MB (sesuaikan kebutuhan)
   fileFilter: (req, file, cb) => {
     const allowedTypes = [
-      "image/jpeg",
-      "image/png",
-      "image/gif",
-      "image/webp",
-      "video/mp4",
-      "video/webm",
-      "video/3gpp",
+      'image/jpeg', 'image/png', 'image/gif', 'image/webp',
+      'video/mp4', 'video/webm', 'video/3gpp'
     ];
     if (allowedTypes.includes(file.mimetype)) {
       cb(null, true);
     } else {
-      cb(new Error("Hanya file gambar dan video yang diperbolehkan"), false);
+      cb(new Error('Hanya gambar dan video yang diperbolehkan'), false);
     }
-  },
+  }
 });
 
 const app = express();
@@ -50,80 +61,95 @@ const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
     origin: "*",
-    methods: ["GET", "POST"],
-  },
+    methods: ["GET", "POST"]
+  }
 });
 
-// Simpan antrian per server
+// Simpan antrian matching
 const waiting = {
   server1: [],
   server2: [],
-  server3: [],
+  server3: []
 };
 
-// Simpan data user
+// Data user aktif
 const users = {};
 
-// Simpan pesan per room (untuk delete-for-everyone & view-once jika mau dikelola server-side)
-const messages = {}; // { roomId: [msgObj, ...] }
+// Simpan pesan per room (untuk delete-for-everyone)
+const messages = {};
 
+// Helper
 function getRoomId(id1, id2) {
   return [id1, id2].sort().join("-");
 }
 
 function timeNow() {
   const d = new Date();
-  return (
-    d.getHours().toString().padStart(2, "0") +
-    ":" +
-    d.getMinutes().toString().padStart(2, "0")
-  );
+  return d.getHours().toString().padStart(2, "0") + ":" + d.getMinutes().toString().padStart(2, "0");
 }
 
 // ─── ROUTE UPLOAD FILE ───────────────────────────────────────
 app.post("/upload", (req, res) => {
+  console.log("[UPLOAD] Request diterima dari:", req.ip);
+
   upload.single("file")(req, res, (err) => {
     if (err instanceof multer.MulterError) {
-      // Kesalahan multer (misal ukuran file terlalu besar)
+      console.error("[UPLOAD ERROR] Multer:", err);
       return res.status(400).json({ error: err.message });
-    } else if (err) {
-      // Kesalahan lain (misal tipe file tidak diizinkan)
+    }
+    if (err) {
+      console.error("[UPLOAD ERROR]:", err.message);
       return res.status(400).json({ error: err.message });
     }
 
     if (!req.file) {
+      console.log("[UPLOAD] Tidak ada file");
       return res.status(400).json({ error: "Tidak ada file yang diupload" });
     }
 
-    const fileUrl = `/uploads/${req.file.filename}`;
+    let fileUrl;
+
+    // Jika pakai disk storage (Render Disk)
+    if (req.file.path) {
+      fileUrl = `/uploads/${req.file.filename}`;
+      console.log("[UPLOAD BERHASIL] File disimpan di:", req.file.path);
+    }
+    // Jika memory storage (fallback)
+    else if (req.file.buffer) {
+      // Contoh: simpan sementara atau kirim ke cloud nanti
+      // Untuk sementara kita return buffer length saja (demo)
+      fileUrl = `/temp/${Date.now()}-${req.file.originalname}`;
+      console.log("[MEMORY UPLOAD] File diterima (memory), ukuran:", req.file.size);
+      // Di production → upload ke Cloudinary/S3 di sini
+    }
+
     res.json({ url: fileUrl });
   });
 });
 
-// Serve file statis (uploads + frontend html jika ada)
-app.use("/uploads", express.static(uploadDir));
+// Serve file yang diupload (hanya berlaku jika pakai disk)
+app.use("/uploads", express.static(UPLOAD_DIR));
+
+// Jika frontend HTML ada di folder public
 app.use(express.static(path.join(__dirname, "public")));
 
 // ─── SOCKET.IO ───────────────────────────────────────────────
 io.on("connection", (socket) => {
   console.log("New connection:", socket.id);
 
-  // Typing indicator
   socket.on("typing", () => {
     const user = users[socket.id];
-    if (!user || !user.partner) return;
-    io.to(user.partner).emit("typing");
+    if (user?.partner) io.to(user.partner).emit("typing");
   });
 
-  // Join & matching
   socket.on("join", (data) => {
-    // Cleanup jika reconnect / join ulang
+    // Cleanup jika reconnect
     if (users[socket.id]) {
       const old = users[socket.id];
       const q = waiting[old.server];
       if (q) {
         const idx = q.indexOf(socket.id);
-        if (idx !== -1) q.splice(idx, 1);
+        if (idx > -1) q.splice(idx, 1);
       }
       if (old.partner && users[old.partner]) {
         users[old.partner].partner = null;
@@ -141,14 +167,13 @@ io.on("connection", (socket) => {
       server: data.server,
       partner: null,
       matched: false,
-      callActive: false,
+      callActive: false
     };
 
     socket.join(data.server);
     tryMatch(socket, data.server);
   });
 
-  // Kirim pesan (text / file)
   socket.on("message", (payload) => {
     const user = users[socket.id];
     if (!user || !user.partner || !user.matched) return;
@@ -164,18 +189,15 @@ io.on("connection", (socket) => {
       caption: payload.caption || "",
       viewOnce: !!payload.viewOnce,
       sender: socket.id,
-      time: timeNow(),
+      time: timeNow()
     };
 
     messages[room].push(msg);
 
-    // Kirim ke partner
     io.to(user.partner).emit("message", msg);
-    // Konfirmasi ke pengirim
     socket.emit("message", msg);
   });
 
-  // Hapus pesan untuk semua orang
   socket.on("delete-for-everyone", ({ msgId }) => {
     const user = users[socket.id];
     if (!user || !user.partner) return;
@@ -183,7 +205,7 @@ io.on("connection", (socket) => {
     const room = getRoomId(socket.id, user.partner);
     if (!messages[room]) return;
 
-    const msg = messages[room].find((m) => m.id === msgId);
+    const msg = messages[room].find(m => m.id === msgId);
     if (msg && msg.sender === socket.id) {
       msg.type = "deleted";
       msg.text = null;
@@ -195,11 +217,12 @@ io.on("connection", (socket) => {
     }
   });
 
-  // ─── Video Call Signaling ────────────────────────────────
+  // ─── Video Call ──────────────────────────────────────────────
   socket.on("call-user", () => {
     const user = users[socket.id];
-    if (!user || !user.partner || !user.matched) return;
-    io.to(user.partner).emit("incoming-call", { name: user.name || "Anon" });
+    if (user?.partner && user.matched) {
+      io.to(user.partner).emit("incoming-call", { name: user.name || "Anon" });
+    }
   });
 
   socket.on("accept-call", () => {
@@ -220,20 +243,17 @@ io.on("connection", (socket) => {
 
   socket.on("offer", (offer) => {
     const user = users[socket.id];
-    if (!user || !user.partner || !user.callActive) return;
-    io.to(user.partner).emit("offer", offer);
+    if (user?.partner && user.callActive) io.to(user.partner).emit("offer", offer);
   });
 
   socket.on("answer", (answer) => {
     const user = users[socket.id];
-    if (!user || !user.partner || !user.callActive) return;
-    io.to(user.partner).emit("answer", answer);
+    if (user?.partner && user.callActive) io.to(user.partner).emit("answer", answer);
   });
 
   socket.on("ice", (candidate) => {
     const user = users[socket.id];
-    if (!user || !user.partner) return;
-    io.to(user.partner).emit("ice", candidate);
+    if (user?.partner) io.to(user.partner).emit("ice", candidate);
   });
 
   socket.on("end-call", () => {
@@ -244,7 +264,6 @@ io.on("connection", (socket) => {
     io.to(user.partner).emit("end-call");
   });
 
-  // Disconnect
   socket.on("disconnect", () => {
     const user = users[socket.id];
     if (!user) return;
@@ -252,7 +271,7 @@ io.on("connection", (socket) => {
     const q = waiting[user.server];
     if (q) {
       const idx = q.indexOf(socket.id);
-      if (idx !== -1) q.splice(idx, 1);
+      if (idx > -1) q.splice(idx, 1);
     }
 
     if (user.partner && users[user.partner]) {
@@ -266,7 +285,7 @@ io.on("connection", (socket) => {
       io.to(user.partner).emit("message", {
         type: "text",
         text: `${user.name || "Seseorang"} keluar dari chat`,
-        time: timeNow(),
+        time: timeNow()
       });
     }
 
@@ -275,7 +294,6 @@ io.on("connection", (socket) => {
   });
 });
 
-// ─── Matching Logic ──────────────────────────────────────────
 function tryMatch(socket, serverName) {
   const queue = waiting[serverName];
   if (!queue) return;
@@ -290,13 +308,12 @@ function tryMatch(socket, serverName) {
     users[partnerId].partner = socket.id;
     users[partnerId].matched = true;
 
-    // Kirim data partner ke masing-masing
     socket.emit("matched", {
       name: users[partnerId].name,
       age: users[partnerId].age,
       gender: users[partnerId].gender,
       job: users[partnerId].job,
-      server: users[partnerId].server,
+      server: users[partnerId].server
     });
 
     io.to(partnerId).emit("matched", {
@@ -304,14 +321,13 @@ function tryMatch(socket, serverName) {
       age: users[socket.id].age,
       gender: users[socket.id].gender,
       job: users[socket.id].job,
-      server: users[socket.id].server,
+      server: users[socket.id].server
     });
 
     console.log(`MATCH: ${socket.id} <-> ${partnerId} (${serverName})`);
     return;
   }
 
-  // Masuk antrian jika belum ada pasangan
   if (!queue.includes(socket.id)) {
     queue.push(socket.id);
   }
