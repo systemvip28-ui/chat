@@ -1,7 +1,6 @@
 {
   "name": "chat-random-server",
   "version": "1.0.0",
-  "description": "Server untuk Chat Random anonim dengan Socket.io + Cloudinary",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
