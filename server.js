@@ -4,7 +4,7 @@ const { Server } = require('socket.io');
 const path = require('path');
 const multer = require('multer');
 const fs = require('fs');
-const { v4: uuidv4 } = require('uuid');  // ← tambahan untuk ID unik
+const { v4: uuidv4 } = require('uuid');
 
 const app = express();
 const server = http.createServer(app);
@@ -14,7 +14,9 @@ const io = new Server(server, {
 
 // ─── UPLOAD CONFIG ─────────────────────────────────────────────────────────────
 const uploadDir = './public/uploads';
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+if (!fs.existsSync(uploadDir)) {
+  fs.mkdirSync(uploadDir, { recursive: true });
+}
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
@@ -47,7 +49,7 @@ const waitingUsers = new Map();
 const pairs = new Map();                // socket.id → partner socket.id
 const userInfo = new Map();
 const activeCalls = new Map();          // callerId → {to: partnerId, timeout}
-const recentlyEndedCalls = new Set();   // cegah spam "menutup panggilan"
+const recentlyEndedCalls = new Set();
 
 // ─── HELPER ────────────────────────────────────────────────────────────────────
 function getDisplayName(id) {
@@ -58,14 +60,6 @@ function getDisplayName(id) {
 function getPartner(socketId) {
   const partnerId = pairs.get(socketId);
   return partnerId ? io.sockets.sockets.get(partnerId) : null;
-}
-
-function getRoom(socketId) {
-  // Karena kita pakai 1:1 pair, room bisa dianggap sebagai kombinasi kedua ID
-  const partnerId = pairs.get(socketId);
-  if (!partnerId) return null;
-  // Buat room name unik (urutan ID lebih kecil dulu)
-  return [socketId, partnerId].sort().join('-');
 }
 
 function sendSystemMsg(fromId, text) {
@@ -153,23 +147,19 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // Buat ID unik di server
     const messageId = uuidv4();
 
-    // Pesan lengkap yang akan dikirim ke kedua sisi
     const fullMessage = {
       id: messageId,
-      ...msgData,                    // type, text / fileUrl, caption, viewOnce, dll
+      ...msgData,
       timestamp: Date.now(),
-      from: socket.id                // opsional, bisa digunakan client untuk tahu sisi "me"
+      from: socket.id
     };
 
     console.log(`Pesan dikirim ke pair: ${socket.id} → ${partner.id} | ID: ${messageId}`);
 
-    // Kirim ke pengirim (update optimistic UI dengan ID resmi)
+    // Kirim ke kedua sisi dengan ID yang sama
     socket.emit('message', fullMessage);
-
-    // Kirim ke penerima
     partner.emit('message', fullMessage);
   });
 
@@ -179,7 +169,6 @@ io.on('connection', (socket) => {
 
     console.log(`Hapus untuk semua: ${msgId} dari ${socket.id}`);
 
-    // Broadcast ke kedua sisi (pengirim & penerima)
     socket.emit('delete-for-everyone', { msgId });
     partner.emit('delete-for-everyone', { msgId });
   });
@@ -192,7 +181,6 @@ io.on('connection', (socket) => {
   // ─── VIDEO CALL ───────────────────────────────────────────────────────────────
   socket.on('call-user', () => {
     const partner = getPartner(socket.id);
-
     if (!partner) {
       socket.emit('call-failed', { reason: 'Partner tidak tersedia atau sudah keluar' });
       return;
@@ -211,7 +199,7 @@ io.on('connection', (socket) => {
     activeCalls.set(socket.id, { to: partner.id, timeout });
 
     partner.emit('incoming-call', { name: getDisplayName(socket.id) });
-    socket.emit('call-sent');  // konfirmasi ke pemanggil
+    socket.emit('call-sent');
   });
 
   socket.on('accept-call', () => {
@@ -283,7 +271,8 @@ io.on('connection', (socket) => {
   });
 });
 
+// ─── START SERVER ──────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server berjalan di port ${PORT}`);
 });
