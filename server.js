@@ -98,19 +98,6 @@ function tryMatchWaiting() {
       e1.socket.emit('matched', userInfo.get(id2));
       e2.socket.emit('matched', userInfo.get(id1));
 
-      // TAMBAHAN: PESAN SELAMAT DATANG SAAT MATCH (agar chat tidak blank)
-      const welcomeMsg = {
-        id: 'sys-welcome-' + Date.now(),
-        type: 'text',
-        text: 'Kalian sekarang terhubung! Mulai ngobrol aja~ 😄',
-        system: true,
-        timestamp: Date.now()
-      };
-
-      e1.socket.emit('message', welcomeMsg);
-      e2.socket.emit('message', welcomeMsg);
-      // Akhir tambahan
-
       waitingUsers.delete(id1);
       waitingUsers.delete(id2);
 
