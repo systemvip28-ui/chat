@@ -104,6 +104,22 @@ function tryMatchWaiting() {
   }
 }
 
+let onlineUsers = 0;
+
+io.on('connection', (socket) => {
+  onlineUsers++;
+  io.emit('online-count', onlineUsers);
+
+  socket.on('disconnect', () => {
+    onlineUsers--;
+    io.emit('online-count', onlineUsers);
+  });
+
+  socket.on('get-online-count', () => {
+    socket.emit('online-count', onlineUsers);
+  });
+});
+
 io.on('connection', (socket) => {
   console.log(`Connected: ${socket.id}`);
 
