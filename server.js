@@ -342,6 +342,21 @@ io.on('connection', (socket) => {
   });
 });
 
+// Contoh di server (Node.js + socket.io)
+io.on("connection", (socket) => {
+  socket.on("join", (userData) => {
+    // ... logic matching ...
+    
+    // Broadcast ke semua client (atau hanya ke yang sedang di searching)
+    io.emit("new-user-joined", {
+      name: userData.name || "Anonim",
+      gender: userData.gender || "",
+      age: userData.age || "?"
+      // jangan kirim data sensitif
+    });
+  });
+});
+
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server berjalan di port ${PORT}`);
