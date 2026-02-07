@@ -74,6 +74,9 @@ function cleanUp(socket) {
       if (other) other.emit('call-rejected', { reason: 'partner terputus' });
     }
   }
+
+  // Broadcast ulang daftar online setelah user keluar
+  broadcastOnlineUsers();
 }
 
 function tryMatchWaiting() {
@@ -104,6 +107,33 @@ function tryMatchWaiting() {
       console.log(`Match berhasil: ${id1} ↔ ${id2}`);
     }
   }
+
+  // Setelah matching, update daftar online (karena waitingUsers berkurang)
+  broadcastOnlineUsers();
+}
+
+// Fungsi baru: Broadcast daftar user yang sedang online/waiting
+function broadcastOnlineUsers() {
+  const onlineList = [];
+
+  // Ambil semua user yang sedang waiting (belum match)
+  for (const [id, entry] of waitingUsers.entries()) {
+    const info = userInfo.get(id);
+    if (info) {
+      onlineList.push({
+        socketId: id,
+        name: info.name || "Anonim",
+        age: info.age || "?",
+        gender: info.gender || "-",
+        job: info.job || "-",
+        server: info.server
+      });
+    }
+  }
+
+  // Kirim ke SEMUA client (atau bisa difilter hanya ke yang di searching nanti di client)
+  io.emit("online-users", onlineList);
+  io.emit("online-count", onlineList.length); // update count juga dari sini (lebih akurat)
 }
 
 let onlineUsers = 0;
@@ -112,19 +142,21 @@ io.on('connection', (socket) => {
   onlineUsers++;
   io.emit('online-count', onlineUsers);
 
+  // Kirim daftar online saat user baru connect (biar langsung lihat riwayat)
+  broadcastOnlineUsers();
+
   socket.on('disconnect', () => {
     onlineUsers--;
     io.emit('online-count', onlineUsers);
+    cleanUp(socket);
+    broadcastOnlineUsers(); // update lagi setelah disconnect
   });
 
   socket.on('get-online-count', () => {
     socket.emit('online-count', onlineUsers);
   });
-});
 
-io.on('connection', (socket) => {
-  console.log(`Connected: ${socket.id}`);
-
+  // Event join user
   socket.on('join', (data) => {
     if (!data?.server) {
       console.log(`Join ditolak dari ${socket.id} - server tidak ada`);
@@ -146,6 +178,9 @@ io.on('connection', (socket) => {
     console.log(`User join: ${socket.id} | ${userData.name} | server: ${userData.server}`);
 
     tryMatchWaiting();
+
+    // Broadcast daftar online setelah user join
+    broadcastOnlineUsers();
   });
 
   socket.on('message', (msgData) => {
@@ -339,21 +374,6 @@ io.on('connection', (socket) => {
   socket.on('disconnect', () => {
     console.log(`Disconnected: ${socket.id}`);
     cleanUp(socket);
-  });
-});
-
-// Contoh di server (Node.js + socket.io)
-io.on("connection", (socket) => {
-  socket.on("join", (userData) => {
-    // ... logic matching ...
-    
-    // Broadcast ke semua client (atau hanya ke yang sedang di searching)
-    io.emit("new-user-joined", {
-      name: userData.name || "Anonim",
-      gender: userData.gender || "",
-      age: userData.age || "?"
-      // jangan kirim data sensitif
-    });
   });
 });
 
