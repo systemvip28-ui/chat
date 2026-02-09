@@ -23,6 +23,10 @@ app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 app.use(express.static('public'));
 
+app.get('/', (req, res) => {
+  res.status(200).send('Live');
+});
+
 const waitingUsers = new Map();
 const pairs = new Map();                
 const userInfo = new Map();
