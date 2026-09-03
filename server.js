@@ -235,7 +235,18 @@ io.on('connection', (socket) => {
     broadcastOnlineUsers();
   });
 
-  // --- STORY & PROFILE EVENTS ---
+  // --- PROFILE UPDATES ---
+  socket.on('update-profile-info', (data) => {
+      const userId = socketToUser.get(socket.id);
+      if(userId) {
+          const user = users.get(userId);
+          if (user) {
+              if (data.name) user.name = data.name;
+              if (data.age) user.age = data.age;
+          }
+      }
+  });
+
   socket.on('update-profile-pic', (url) => {
     const userId = socketToUser.get(socket.id);
     if (userId) {
@@ -248,14 +259,16 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('add-story', (url) => {
+  // --- STORY EVENTS ---
+  socket.on('add-story', (data) => {
     const userId = socketToUser.get(socket.id);
     if (userId) {
         const user = users.get(userId);
         if (user) {
             user.stories.push({
                 id: uuidv4(),
-                url: url,
+                url: data.url || data,
+                type: data.type || 'image', // Support video/image
                 timestamp: Date.now(),
                 viewers: [] // { id, name }
             });
@@ -322,7 +335,7 @@ io.on('connection', (socket) => {
       from: userId
     };
 
-    // Simpan ke history
+    // Simpan ke history (agar dapat diterima lawan biarpun mereka offline saat ini)
     const pairKey = getPairKey(userId, partnerId);
     if (!chatHistories.has(pairKey)) chatHistories.set(pairKey, []);
     const arr = chatHistories.get(pairKey);
@@ -373,7 +386,7 @@ io.on('connection', (socket) => {
         
         const partnerSocket = io.sockets.sockets.get(users.get(partnerId)?.socketId);
         if (partnerSocket) {
-            partnerSocket.emit('partner-disconnected'); // Munculkan "Offline" dan button refresh
+            partnerSocket.emit('partner-disconnected'); // Munculkan "Offline" dan matikan tombol
         }
     }
   });
