@@ -314,7 +314,7 @@ io.on('connection', (socket) => {
     const partnerId = pairs.get(userId);
     if (!partnerId) return;
     
-    const messageId = uuidv4();
+    const messageId = msgData.id || uuidv4();
     const fullMessage = {
       id: messageId,
       ...msgData,
@@ -330,7 +330,30 @@ io.on('connection', (socket) => {
 
     const partnerSocket = getPartnerSocket(userId);
     if (partnerSocket) partnerSocket.emit('message', fullMessage);
-    socket.emit('message-confirmed', { id: messageId });
+    
+    // Konfirmasi pesan (jangan konfirmasi jika itu pesan sistem)
+    if (msgData.type !== 'system') {
+        socket.emit('message-confirmed', { id: messageId });
+    }
+  });
+
+  // Event baru: Reaksi Pesan
+  socket.on('reaction', ({ msgId, reaction }) => {
+      const userId = socketToUser.get(socket.id);
+      if (!userId) return;
+      const partnerId = pairs.get(userId);
+
+      if (partnerId) {
+          const pairKey = getPairKey(userId, partnerId);
+          const arr = chatHistories.get(pairKey);
+          if (arr) {
+              const msgObj = arr.find(m => m.id === msgId);
+              if (msgObj) msgObj.reaction = reaction;
+          }
+      }
+
+      const partnerSocket = getPartnerSocket(userId);
+      if (partnerSocket) partnerSocket.emit('reaction', { msgId, reaction });
   });
 
   socket.on('delete-for-everyone', ({ msgId }) => {
@@ -355,6 +378,17 @@ io.on('connection', (socket) => {
   socket.on('typing', () => {
     const partnerSocket = getPartnerSocket(socketToUser.get(socket.id));
     if (partnerSocket) partnerSocket.emit('typing');
+  });
+
+  // Event baru: Rekaman Suara (VN Indicator)
+  socket.on('recording-audio', () => {
+      const partnerSocket = getPartnerSocket(socketToUser.get(socket.id));
+      if (partnerSocket) partnerSocket.emit('recording-audio');
+  });
+  
+  socket.on('stop-recording-audio', () => {
+      const partnerSocket = getPartnerSocket(socketToUser.get(socket.id));
+      if (partnerSocket) partnerSocket.emit('stop-recording-audio');
   });
 
   socket.on('putus-hubungan', () => {
