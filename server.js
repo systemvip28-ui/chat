@@ -152,7 +152,6 @@ io.on('connection', (socket) => {
 
             const partnerSocket = getPartnerSocket(userId);
             if (partnerSocket) {
-                // Beri tahu partner bahwa user ini offline (Tutup tab, bukan putus)
                 partnerSocket.emit('partner-offline', { lastSeen: user.lastSeen });
             } else {
                 waitingUsers.delete(userId);
@@ -207,35 +206,30 @@ io.on('connection', (socket) => {
     }
     user.socketId = socket.id;
 
-    // Jika user ini sedang berpasangan dengan seseorang
     const partnerId = pairs.get(userId);
     if (partnerId) {
         const partner = users.get(partnerId);
         if (partner) {
-            socket.emit('matched', partner); // Kembalikan ke chat otomatis
+            socket.emit('matched', partner); 
             
             const pairKey = getPairKey(userId, partnerId);
             const history = chatHistories.get(pairKey) || [];
-            socket.emit('chat-history', history); // Sync chat log
+            socket.emit('chat-history', history);
 
             if (partner.online && partner.socketId) {
-                // Beri tahu partner bahwa user sudah kembali online
                 io.to(partner.socketId).emit('partner-online');
             } else {
-                // Tampilkan last seen partner karena belum masuk
                 socket.emit('partner-offline', { lastSeen: partner.lastSeen });
             }
             return;
         }
     }
 
-    // Jika tidak berpasangan, masuk ke pencarian
     waitingUsers.add(userId);
     tryMatchWaiting();
     broadcastOnlineUsers();
   });
 
-  // --- PROFILE UPDATES ---
   socket.on('update-profile-info', (data) => {
       const userId = socketToUser.get(socket.id);
       if(userId) {
@@ -259,7 +253,6 @@ io.on('connection', (socket) => {
     }
   });
 
-  // --- STORY EVENTS ---
   socket.on('add-story', (data) => {
     const userId = socketToUser.get(socket.id);
     if (userId) {
@@ -268,9 +261,9 @@ io.on('connection', (socket) => {
             user.stories.push({
                 id: uuidv4(),
                 url: data.url || data,
-                type: data.type || 'image', // Support video/image
+                type: data.type || 'image', 
                 timestamp: Date.now(),
-                viewers: [] // { id, name }
+                viewers: []
             });
         }
     }
@@ -310,7 +303,6 @@ io.on('connection', (socket) => {
           if (myInfo && partnerInfo) {
               const story = partnerInfo.stories.find(s => s.id === storyId);
               if (story) {
-                  // Cek apakah sudah melihat
                   if (!story.viewers.find(v => v.id === userId)) {
                       story.viewers.push({ id: userId, name: myInfo.name });
                   }
@@ -318,9 +310,7 @@ io.on('connection', (socket) => {
           }
       }
   });
-  // ------------------------------
 
-  // --- MESSAGING ---
   socket.on('message', (msgData) => {
     const userId = socketToUser.get(socket.id);
     if (!userId) return;
@@ -335,7 +325,6 @@ io.on('connection', (socket) => {
       from: userId
     };
 
-    // Simpan ke history (agar dapat diterima lawan biarpun mereka offline saat ini)
     const pairKey = getPairKey(userId, partnerId);
     if (!chatHistories.has(pairKey)) chatHistories.set(pairKey, []);
     const arr = chatHistories.get(pairKey);
@@ -371,7 +360,6 @@ io.on('connection', (socket) => {
     if (partnerSocket) partnerSocket.emit('typing');
   });
 
-  // --- PUTUS HUBUNGAN (EXPLICIT DISCONNECT) ---
   socket.on('putus-hubungan', () => {
     const userId = socketToUser.get(socket.id);
     if (!userId) return;
@@ -382,17 +370,17 @@ io.on('connection', (socket) => {
         pairs.delete(partnerId);
         
         const pairKey = getPairKey(userId, partnerId);
-        chatHistories.delete(pairKey); // Hapus chat history dari memory
+        chatHistories.delete(pairKey);
         
         const partnerSocket = io.sockets.sockets.get(users.get(partnerId)?.socketId);
         if (partnerSocket) {
-            partnerSocket.emit('partner-disconnected'); // Munculkan "Offline" dan matikan tombol
+            partnerSocket.emit('partner-disconnected');
         }
     }
   });
 
-  // === WEBRTC EVENTS ===
-  socket.on('call-user', () => {
+  // Call System modified to accept 'isVideo' parameter
+  socket.on('call-user', (data) => {
     const partnerSocket = getPartnerSocket(socketToUser.get(socket.id));
     if (!partnerSocket) {
       socket.emit('call-failed', { reason: 'Partner tidak tersedia atau sudah keluar' });
@@ -410,7 +398,11 @@ io.on('connection', (socket) => {
     }, 30000);
 
     activeCalls.set(socket.id, { to: partnerSocket.id, timeout });
-    partnerSocket.emit('incoming-call', { name: getDisplayName(socketToUser.get(socket.id)) });
+    // Kirim state isVideo ke penerima
+    partnerSocket.emit('incoming-call', { 
+        name: getDisplayName(socketToUser.get(socket.id)),
+        isVideo: data ? data.isVideo : true
+    });
     socket.emit('call-sent');
   });
 
