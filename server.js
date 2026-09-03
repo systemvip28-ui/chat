@@ -27,13 +27,12 @@ app.get('/', (req, res) => {
   res.status(200).send('Live');
 });
 
-const users = new Map(); // Map: userId -> Data Profil, History, & Story
-const socketToUser = new Map(); // Map: socket.id -> userId
-const waitingUsers = new Set(); // Set of userIds
-const pairs = new Map(); // Map: userId -> partnerUserId
-const chatHistories = new Map(); // Map: pairKey -> array of messages
-
-const activeCalls = new Map(); // Map: caller socketId -> { to: receiver socketId, timeout }
+const users = new Map(); 
+const socketToUser = new Map(); 
+const waitingUsers = new Set(); 
+const pairs = new Map(); 
+const chatHistories = new Map(); 
+const activeCalls = new Map(); 
 const recentlyEndedCalls = new Set();
 
 function getPairKey(id1, id2) {
@@ -100,7 +99,6 @@ function tryMatchWaiting() {
         
         if (!u1 || !u2) continue;
 
-        // Cek History Bertemu (Hanya Sekali Bertemu, tapi dihapus saat putus hubungan agar bisa match lagi)
         if (!u1.history.has(id2) && !u2.history.has(id1)) {
           pairs.set(id1, id2);
           pairs.set(id2, id1);
@@ -159,7 +157,6 @@ io.on('connection', (socket) => {
         }
     }
     
-    // Cleanup active calls
     for (const [cid, call] of activeCalls.entries()) {
       if (cid === socket.id || call.to === socket.id) {
         if (call.timeout) clearTimeout(call.timeout);
@@ -329,7 +326,7 @@ io.on('connection', (socket) => {
     if (!chatHistories.has(pairKey)) chatHistories.set(pairKey, []);
     const arr = chatHistories.get(pairKey);
     arr.push(fullMessage);
-    if(arr.length > 50) arr.shift(); // Max 50 cache
+    if(arr.length > 1000) arr.shift(); 
 
     const partnerSocket = getPartnerSocket(userId);
     if (partnerSocket) partnerSocket.emit('message', fullMessage);
@@ -364,7 +361,6 @@ io.on('connection', (socket) => {
     const userId = socketToUser.get(socket.id);
     if (!userId) return;
     
-    // REVISI: Hapus dari antrean jika statusnya membatalkan pencarian
     waitingUsers.delete(userId);
 
     const partnerId = pairs.get(userId);
@@ -375,7 +371,6 @@ io.on('connection', (socket) => {
         const pairKey = getPairKey(userId, partnerId);
         chatHistories.delete(pairKey);
         
-        // REVISI: Hapus memori history masing-masing agar bisa MATCH KEMBALI
         const user1 = users.get(userId);
         const user2 = users.get(partnerId);
         if (user1) user1.history.delete(partnerId);
@@ -387,7 +382,6 @@ io.on('connection', (socket) => {
         }
     }
     
-    // Memberitahu ulang siapa saja yang online
     broadcastOnlineUsers();
   });
 
