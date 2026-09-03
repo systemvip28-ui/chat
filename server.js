@@ -27,118 +27,45 @@ app.get('/', (req, res) => {
   res.status(200).send('Live');
 });
 
-const waitingUsers = new Map();
-const pairs = new Map();                
-const userInfo = new Map();
-const activeCalls = new Map();          
+const users = new Map(); // Map: userId -> Data Profil, History, & Story
+const socketToUser = new Map(); // Map: socket.id -> userId
+const waitingUsers = new Set(); // Set of userIds
+const pairs = new Map(); // Map: userId -> partnerUserId
+const chatHistories = new Map(); // Map: pairKey -> array of messages
+
+const activeCalls = new Map(); // Map: caller socketId -> { to: receiver socketId, timeout }
 const recentlyEndedCalls = new Set();
 
-function getDisplayName(id) {
-  const info = userInfo.get(id);
+function getPairKey(id1, id2) {
+  return [id1, id2].sort().join('_');
+}
+
+function getDisplayName(userId) {
+  const info = users.get(userId);
   return info?.name?.trim() && info.name.trim() !== '' ? info.name.trim() : 'Pengguna';
 }
 
-function getPartner(socketId) {
-  const partnerId = pairs.get(socketId);
-  return partnerId ? io.sockets.sockets.get(partnerId) : null;
+function getPartnerUserId(userId) {
+  return pairs.get(userId);
 }
 
-function sendSystemMsg(fromId, text) {
-  const partner = getPartner(fromId);
-  if (partner) {
-    partner.emit('message', {
-      id: 'sys-' + Date.now(),
-      type: 'text',
-      text,
-      system: true,
-      timestamp: Date.now()
-    });
+function getPartnerSocket(userId) {
+  const partnerId = pairs.get(userId);
+  if (!partnerId) return null;
+  const partner = users.get(partnerId);
+  if (partner && partner.online && partner.socketId) {
+    return io.sockets.sockets.get(partner.socketId);
   }
-}
-
-function cleanUp(socket) {
-  const partner = getPartner(socket.id);
-  const name = getDisplayName(socket.id);
-
-  if (partner) {
-    sendSystemMsg(socket.id, `${name} telah keluar dari chat`);
-    partner.emit('partner-left');
-    pairs.delete(partner.id);
-  }
-
-  pairs.delete(socket.id);
-  waitingUsers.delete(socket.id);
-  // userInfo tidak langsung dihapus agar history tidak hilang jika reconnect (bisa dihapus jika perlu, namun untuk sementara biarkan)
-  
-  for (const [cid, call] of activeCalls.entries()) {
-    if (cid === socket.id || call.to === socket.id) {
-      if (call.timeout) clearTimeout(call.timeout);
-      activeCalls.delete(cid);
-      const other = io.sockets.sockets.get(cid === socket.id ? call.to : cid);
-      if (other) other.emit('call-rejected', { reason: 'partner terputus' });
-    }
-  }
-
-  broadcastOnlineUsers();
-}
-
-function tryMatchWaiting() {
-  const byServer = new Map();
-  for (const [id, e] of waitingUsers.entries()) {
-    const s = e.info.server;
-    if (!byServer.has(s)) byServer.set(s, []);
-    byServer.get(s).push(id);
-  }
-
-  for (const ids of byServer.values()) {
-    let i = 0;
-    while (i < ids.length) {
-      let matched = false;
-      for (let j = i + 1; j < ids.length; j++) {
-        const id1 = ids[i];
-        const id2 = ids[j];
-        const e1 = waitingUsers.get(id1);
-        const e2 = waitingUsers.get(id2);
-        
-        if (!e1 || !e2) continue;
-
-        // Cek History Bertemu (Hanya Sekali)
-        if (!e1.info.history.has(id2) && !e2.info.history.has(id1)) {
-          pairs.set(id1, id2);
-          pairs.set(id2, id1);
-
-          e1.info.history.add(id2);
-          e2.info.history.add(id1);
-
-          e1.socket.emit('matched', userInfo.get(id2));
-          e2.socket.emit('matched', userInfo.get(id1));
-
-          waitingUsers.delete(id1);
-          waitingUsers.delete(id2);
-          
-          ids.splice(j, 1);
-          ids.splice(i, 1);
-          matched = true;
-          console.log(`Match berhasil: ${id1} ↔ ${id2}`);
-          break;
-        }
-      }
-      if (!matched) {
-        i++;
-      }
-    }
-  }
-
-  broadcastOnlineUsers();
+  return null;
 }
 
 function broadcastOnlineUsers() {
   const onlineList = [];
-  for (const [id, entry] of waitingUsers.entries()) {
-    const info = userInfo.get(id);
-    if (info) {
+  for (const userId of waitingUsers) {
+    const info = users.get(userId);
+    if (info && info.online) {
       onlineList.push({
-        socketId: id,
+        userId: userId,
         name: info.name || "Anonim",
         age: info.age || "?",
         gender: info.gender || "-",
@@ -151,77 +78,207 @@ function broadcastOnlineUsers() {
   io.emit("online-count", onlineList.length); 
 }
 
-let onlineUsers = 0;
+function tryMatchWaiting() {
+  const byServer = new Map();
+  for (const userId of waitingUsers) {
+    const user = users.get(userId);
+    if (!user || !user.online) continue;
+    const s = user.server;
+    if (!byServer.has(s)) byServer.set(s, []);
+    byServer.get(s).push(userId);
+  }
+
+  for (const ids of byServer.values()) {
+    let i = 0;
+    while (i < ids.length) {
+      let matched = false;
+      for (let j = i + 1; j < ids.length; j++) {
+        const id1 = ids[i];
+        const id2 = ids[j];
+        const u1 = users.get(id1);
+        const u2 = users.get(id2);
+        
+        if (!u1 || !u2) continue;
+
+        // Cek History Bertemu (Hanya Sekali Bertemu Sepanjang Sesi Permanen)
+        if (!u1.history.has(id2) && !u2.history.has(id1)) {
+          pairs.set(id1, id2);
+          pairs.set(id2, id1);
+
+          u1.history.add(id2);
+          u2.history.add(id1);
+
+          const s1 = io.sockets.sockets.get(u1.socketId);
+          const s2 = io.sockets.sockets.get(u2.socketId);
+          
+          if(s1) s1.emit('matched', u2);
+          if(s2) s2.emit('matched', u1);
+
+          waitingUsers.delete(id1);
+          waitingUsers.delete(id2);
+          
+          ids.splice(j, 1);
+          ids.splice(i, 1);
+          matched = true;
+          console.log(`Match berhasil: ${id1} ↔ ${id2}`);
+          break;
+        }
+      }
+      if (!matched) i++;
+    }
+  }
+
+  broadcastOnlineUsers();
+}
+
+let onlineCountGlobal = 0;
 
 io.on('connection', (socket) => {
-  onlineUsers++;
-  io.emit('online-count', onlineUsers);
-  broadcastOnlineUsers();
+  onlineCountGlobal++;
+  io.emit('online-count', onlineCountGlobal);
 
   socket.on('disconnect', () => {
-    onlineUsers--;
-    io.emit('online-count', onlineUsers);
-    cleanUp(socket);
+    onlineCountGlobal--;
+    io.emit('online-count', onlineCountGlobal);
+    
+    const userId = socketToUser.get(socket.id);
+    if (userId) {
+        socketToUser.delete(socket.id);
+        const user = users.get(userId);
+        if (user) {
+            user.online = false;
+            user.lastSeen = Date.now();
+            user.socketId = null;
+
+            const partnerSocket = getPartnerSocket(userId);
+            if (partnerSocket) {
+                // Beri tahu partner bahwa user ini offline (Tutup tab, bukan putus)
+                partnerSocket.emit('partner-offline', { lastSeen: user.lastSeen });
+            } else {
+                waitingUsers.delete(userId);
+            }
+        }
+    }
+    
+    // Cleanup active calls
+    for (const [cid, call] of activeCalls.entries()) {
+      if (cid === socket.id || call.to === socket.id) {
+        if (call.timeout) clearTimeout(call.timeout);
+        activeCalls.delete(cid);
+        const other = io.sockets.sockets.get(cid === socket.id ? call.to : cid);
+        if (other) other.emit('call-rejected', { reason: 'partner terputus' });
+      }
+    }
     broadcastOnlineUsers(); 
   });
 
   socket.on('get-online-count', () => {
-    socket.emit('online-count', onlineUsers);
+    socket.emit('online-count', onlineCountGlobal);
   });
 
   socket.on('join', (data) => {
-    if (!data?.server) {
-      socket.emit('error', { message: 'Server harus dipilih' });
+    if (!data?.server || !data?.userId) {
+      socket.emit('error', { message: 'Data tidak lengkap' });
       return;
     }
 
-    // Jika user sudah ada info (krn reconnect) pertahankan history & story
-    let existingInfo = userInfo.get(socket.id) || { history: new Set(), stories: [], profilePic: data.profilePic || '' };
+    const userId = data.userId;
+    socketToUser.set(socket.id, userId);
 
-    const userData = {
-      name:   data.name   ? String(data.name).trim()   : 'Anonim',
-      age:    data.age    ? Number(data.age)           : null,
-      gender: data.gender ? String(data.gender).trim() : '-',
-      job:    data.job    ? String(data.job).trim()    : '-',
-      server: data.server,
-      profilePic: data.profilePic || existingInfo.profilePic,
-      history: existingInfo.history,
-      stories: existingInfo.stories
-    };
+    let user = users.get(userId);
+    if (!user) {
+        user = { 
+            name: data.name ? String(data.name).trim() : 'Anonim',
+            age: data.age ? Number(data.age) : null,
+            gender: data.gender ? String(data.gender).trim() : '-',
+            job: data.job ? String(data.job).trim() : '-',
+            server: data.server,
+            profilePic: data.profilePic || '',
+            history: new Set(), 
+            stories: [], 
+            online: true 
+        };
+        users.set(userId, user);
+    } else {
+        user.name = data.name ? String(data.name).trim() : 'Anonim';
+        user.server = data.server;
+        if(data.profilePic) user.profilePic = data.profilePic;
+        user.online = true;
+    }
+    user.socketId = socket.id;
 
-    userInfo.set(socket.id, userData);
-    waitingUsers.set(socket.id, { socket, info: userData });
+    // Jika user ini sedang berpasangan dengan seseorang
+    const partnerId = pairs.get(userId);
+    if (partnerId) {
+        const partner = users.get(partnerId);
+        if (partner) {
+            socket.emit('matched', partner); // Kembalikan ke chat otomatis
+            
+            const pairKey = getPairKey(userId, partnerId);
+            const history = chatHistories.get(pairKey) || [];
+            socket.emit('chat-history', history); // Sync chat log
 
+            if (partner.online && partner.socketId) {
+                // Beri tahu partner bahwa user sudah kembali online
+                io.to(partner.socketId).emit('partner-online');
+            } else {
+                // Tampilkan last seen partner karena belum masuk
+                socket.emit('partner-offline', { lastSeen: partner.lastSeen });
+            }
+            return;
+        }
+    }
+
+    // Jika tidak berpasangan, masuk ke pencarian
+    waitingUsers.add(userId);
     tryMatchWaiting();
     broadcastOnlineUsers();
   });
 
   // --- STORY & PROFILE EVENTS ---
   socket.on('update-profile-pic', (url) => {
-    const info = userInfo.get(socket.id);
-    if (info) {
-        info.profilePic = url;
-        const partner = getPartner(socket.id);
-        if (partner) partner.emit('partner-profile-updated', url);
+    const userId = socketToUser.get(socket.id);
+    if (userId) {
+        const user = users.get(userId);
+        if (user) {
+            user.profilePic = url;
+            const partnerSocket = getPartnerSocket(userId);
+            if (partnerSocket) partnerSocket.emit('partner-profile-updated', url);
+        }
     }
   });
 
   socket.on('add-story', (url) => {
-    const info = userInfo.get(socket.id);
-    if (info) {
-        info.stories.push({
-            id: uuidv4(),
-            url: url,
-            timestamp: Date.now(),
-            viewers: []
-        });
+    const userId = socketToUser.get(socket.id);
+    if (userId) {
+        const user = users.get(userId);
+        if (user) {
+            user.stories.push({
+                id: uuidv4(),
+                url: url,
+                timestamp: Date.now(),
+                viewers: [] // { id, name }
+            });
+        }
     }
   });
 
+  socket.on('delete-story', (storyId) => {
+      const userId = socketToUser.get(socket.id);
+      if (userId) {
+          const user = users.get(userId);
+          if (user) {
+              user.stories = user.stories.filter(s => s.id !== storyId);
+          }
+      }
+  });
+
   socket.on('get-stories', () => {
-      const myInfo = userInfo.get(socket.id);
-      const partner = getPartner(socket.id);
-      let partnerInfo = partner ? userInfo.get(partner.id) : null;
+      const userId = socketToUser.get(socket.id);
+      if (!userId) return;
+      const myInfo = users.get(userId);
+      const partnerId = pairs.get(userId);
+      let partnerInfo = partnerId ? users.get(partnerId) : null;
       
       socket.emit('stories-data', {
           myStories: myInfo ? myInfo.stories : [],
@@ -231,16 +288,18 @@ io.on('connection', (socket) => {
   });
 
   socket.on('view-story', (storyId) => {
-      const partner = getPartner(socket.id);
-      const myInfo = userInfo.get(socket.id);
-      if (partner && myInfo) {
-          const partnerInfo = userInfo.get(partner.id);
-          if (partnerInfo) {
+      const userId = socketToUser.get(socket.id);
+      const partnerId = pairs.get(userId);
+      if (userId && partnerId) {
+          const myInfo = users.get(userId);
+          const partnerInfo = users.get(partnerId);
+          
+          if (myInfo && partnerInfo) {
               const story = partnerInfo.stories.find(s => s.id === storyId);
               if (story) {
-                  // Cek apakah sudah pernah melihat
-                  if (!story.viewers.find(v => v.id === socket.id)) {
-                      story.viewers.push({ id: socket.id, name: myInfo.name });
+                  // Cek apakah sudah melihat
+                  if (!story.viewers.find(v => v.id === userId)) {
+                      story.viewers.push({ id: userId, name: myInfo.name });
                   }
               }
           }
@@ -248,94 +307,81 @@ io.on('connection', (socket) => {
   });
   // ------------------------------
 
+  // --- MESSAGING ---
   socket.on('message', (msgData) => {
-    const partner = getPartner(socket.id);
-    if (!partner) return;
-
+    const userId = socketToUser.get(socket.id);
+    if (!userId) return;
+    const partnerId = pairs.get(userId);
+    if (!partnerId) return;
+    
     const messageId = uuidv4();
     const fullMessage = {
       id: messageId,
       ...msgData,
       timestamp: Date.now(),
-      from: socket.id
+      from: userId
     };
 
-    partner.emit('message', fullMessage);
+    // Simpan ke history
+    const pairKey = getPairKey(userId, partnerId);
+    if (!chatHistories.has(pairKey)) chatHistories.set(pairKey, []);
+    const arr = chatHistories.get(pairKey);
+    arr.push(fullMessage);
+    if(arr.length > 50) arr.shift(); // Max 50 cache
+
+    const partnerSocket = getPartnerSocket(userId);
+    if (partnerSocket) partnerSocket.emit('message', fullMessage);
     socket.emit('message-confirmed', { id: messageId });
   });
 
   socket.on('delete-for-everyone', ({ msgId }) => {
-    const partner = getPartner(socket.id);
-    if (!partner) return;
+    const userId = socketToUser.get(socket.id);
+    if (!userId) return;
+    const partnerId = pairs.get(userId);
+    
+    if (partnerId) {
+        const pairKey = getPairKey(userId, partnerId);
+        const arr = chatHistories.get(pairKey);
+        if (arr) {
+            const msgObj = arr.find(m => m.id === msgId);
+            if(msgObj) msgObj.type = 'deleted';
+        }
+    }
+
+    const partnerSocket = getPartnerSocket(userId);
+    if (partnerSocket) partnerSocket.emit('delete-for-everyone', { msgId });
     socket.emit('delete-for-everyone', { msgId });
-    partner.emit('delete-for-everyone', { msgId });
   });
 
   socket.on('typing', () => {
-    const p = getPartner(socket.id);
-    if (p) p.emit('typing');
+    const partnerSocket = getPartnerSocket(socketToUser.get(socket.id));
+    if (partnerSocket) partnerSocket.emit('typing');
   });
 
-  socket.on('upload-file', async (data, callback) => {
-    const { buffer, filename, mimetype, caption, viewOnce } = data;
-
-    if (!buffer || !filename || !mimetype?.startsWith('image/')) {
-      return callback?.({ success: false, error: 'Data file tidak valid' });
-    }
-
-    try {
-      if (buffer.length > 10 * 1024 * 1024) {
-        return callback?.({ success: false, error: 'File terlalu besar maks 10MB' });
-      }
-
-      const uploadResult = await new Promise((resolve, reject) => {
-        const uploadStream = cloudinary.uploader.upload_stream(
-          {
-            resource_type: 'image',
-            folder: 'sanz-chat',
-            public_id: `${Date.now()}-${uuidv4().slice(0, 8)}`,
-            overwrite: true,
-            format: path.extname(filename).slice(1) || 'jpg'
-          },
-          (error, result) => {
-            if (error) return reject(error);
-            resolve(result);
-          }
-        );
-        uploadStream.end(Buffer.from(buffer));
-      });
-
-      const imageUrl = uploadResult.secure_url;
-      const partner = getPartner(socket.id);
-
-      if (partner) {
-        const messageId = uuidv4();
-        const fileMsg = {
-          id: messageId,
-          type: 'file',
-          fileUrl: imageUrl,
-          caption: caption || '',
-          viewOnce: !!viewOnce,
-          timestamp: Date.now(),
-          from: socket.id
-        };
-
-        partner.emit('message', fileMsg);
-        socket.emit('message-confirmed', { id: messageId });
-      }
-
-      callback?.({ success: true, url: imageUrl });
-
-    } catch (err) {
-      console.error('Cloudinary upload gagal:', err.message || err);
-      callback?.({ success: false, error: 'Gagal upload gambar ke Cloudinary' });
+  // --- PUTUS HUBUNGAN (EXPLICIT DISCONNECT) ---
+  socket.on('putus-hubungan', () => {
+    const userId = socketToUser.get(socket.id);
+    if (!userId) return;
+    
+    const partnerId = pairs.get(userId);
+    if (partnerId) {
+        pairs.delete(userId);
+        pairs.delete(partnerId);
+        
+        const pairKey = getPairKey(userId, partnerId);
+        chatHistories.delete(pairKey); // Hapus chat history dari memory
+        
+        const partnerSocket = io.sockets.sockets.get(users.get(partnerId)?.socketId);
+        if (partnerSocket) {
+            partnerSocket.emit('partner-disconnected'); // Munculkan "Offline" dan button refresh
+        }
     }
   });
 
   // === WEBRTC EVENTS ===
   socket.on('call-user', () => {
-    const partner = getPartner(socket.id);
-    if (!partner) {
+    const partnerSocket = getPartnerSocket(socketToUser.get(socket.id));
+    if (!partnerSocket) {
       socket.emit('call-failed', { reason: 'Partner tidak tersedia atau sudah keluar' });
       return;
     }
@@ -350,8 +396,8 @@ io.on('connection', (socket) => {
       activeCalls.delete(socket.id);
     }, 30000);
 
-    activeCalls.set(socket.id, { to: partner.id, timeout });
-    partner.emit('incoming-call', { name: getDisplayName(socket.id) });
+    activeCalls.set(socket.id, { to: partnerSocket.id, timeout });
+    partnerSocket.emit('incoming-call', { name: getDisplayName(socketToUser.get(socket.id)) });
     socket.emit('call-sent');
   });
 
@@ -383,13 +429,13 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('offer', (offer) => { const p = getPartner(socket.id); if (p) p.emit('offer', offer); });
-  socket.on('answer', (answer) => { const p = getPartner(socket.id); if (p) p.emit('answer', answer); });
-  socket.on('ice', (candidate) => { const p = getPartner(socket.id); if (p) p.emit('ice', candidate); });
+  socket.on('offer', (offer) => { const p = getPartnerSocket(socketToUser.get(socket.id)); if (p) p.emit('offer', offer); });
+  socket.on('answer', (answer) => { const p = getPartnerSocket(socketToUser.get(socket.id)); if (p) p.emit('answer', answer); });
+  socket.on('ice', (candidate) => { const p = getPartnerSocket(socketToUser.get(socket.id)); if (p) p.emit('ice', candidate); });
 
   socket.on('media-status', (status) => {
-    const partner = getPartner(socket.id);
-    if (partner) partner.emit('media-status', status);
+    const p = getPartnerSocket(socketToUser.get(socket.id));
+    if (p) p.emit('media-status', status);
   });
 
   socket.on('end-call', () => {
@@ -397,11 +443,8 @@ io.on('connection', (socket) => {
     recentlyEndedCalls.add(socket.id);
     setTimeout(() => recentlyEndedCalls.delete(socket.id), 8000);
 
-    const p = getPartner(socket.id);
-    if (p) {
-      sendSystemMsg(socket.id, `Panggilan berakhir`);
-      p.emit('end-call');
-    }
+    const p = getPartnerSocket(socketToUser.get(socket.id));
+    if (p) p.emit('end-call');
     activeCalls.delete(socket.id);
   });
 });
