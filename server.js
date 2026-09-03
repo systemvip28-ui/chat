@@ -100,7 +100,7 @@ function tryMatchWaiting() {
         
         if (!u1 || !u2) continue;
 
-        // Cek History Bertemu (Hanya Sekali Bertemu Sepanjang Sesi Permanen)
+        // Cek History Bertemu (Hanya Sekali Bertemu, tapi dihapus saat putus hubungan agar bisa match lagi)
         if (!u1.history.has(id2) && !u2.history.has(id1)) {
           pairs.set(id1, id2);
           pairs.set(id2, id1);
@@ -364,6 +364,9 @@ io.on('connection', (socket) => {
     const userId = socketToUser.get(socket.id);
     if (!userId) return;
     
+    // REVISI: Hapus dari antrean jika statusnya membatalkan pencarian
+    waitingUsers.delete(userId);
+
     const partnerId = pairs.get(userId);
     if (partnerId) {
         pairs.delete(userId);
@@ -372,14 +375,22 @@ io.on('connection', (socket) => {
         const pairKey = getPairKey(userId, partnerId);
         chatHistories.delete(pairKey);
         
+        // REVISI: Hapus memori history masing-masing agar bisa MATCH KEMBALI
+        const user1 = users.get(userId);
+        const user2 = users.get(partnerId);
+        if (user1) user1.history.delete(partnerId);
+        if (user2) user2.history.delete(userId);
+        
         const partnerSocket = io.sockets.sockets.get(users.get(partnerId)?.socketId);
         if (partnerSocket) {
             partnerSocket.emit('partner-disconnected');
         }
     }
+    
+    // Memberitahu ulang siapa saja yang online
+    broadcastOnlineUsers();
   });
 
-  // Call System modified to accept 'isVideo' parameter
   socket.on('call-user', (data) => {
     const partnerSocket = getPartnerSocket(socketToUser.get(socket.id));
     if (!partnerSocket) {
@@ -398,7 +409,6 @@ io.on('connection', (socket) => {
     }, 30000);
 
     activeCalls.set(socket.id, { to: partnerSocket.id, timeout });
-    // Kirim state isVideo ke penerima
     partnerSocket.emit('incoming-call', { 
         name: getDisplayName(socketToUser.get(socket.id)),
         isVideo: data ? data.isVideo : true
