@@ -143,7 +143,10 @@ io.on('connection', (socket) => {
     if (userId) {
         socketToUser.delete(socket.id);
         const user = users.get(userId);
-        if (user) {
+        
+        // BUG FIX: Hanya set offline jika socket yang terputus adalah socket yang aktif saat ini.
+        // Mencegah bug offline saat user refresh atau buka tab baru dengan cepat.
+        if (user && user.socketId === socket.id) {
             user.online = false;
             user.lastSeen = Date.now();
             user.socketId = null;
@@ -331,13 +334,11 @@ io.on('connection', (socket) => {
     const partnerSocket = getPartnerSocket(userId);
     if (partnerSocket) partnerSocket.emit('message', fullMessage);
     
-    // Konfirmasi pesan (jangan konfirmasi jika itu pesan sistem)
     if (msgData.type !== 'system') {
         socket.emit('message-confirmed', { id: messageId });
     }
   });
 
-  // Event baru: Reaksi Pesan
   socket.on('reaction', ({ msgId, reaction }) => {
       const userId = socketToUser.get(socket.id);
       if (!userId) return;
@@ -380,7 +381,6 @@ io.on('connection', (socket) => {
     if (partnerSocket) partnerSocket.emit('typing');
   });
 
-  // Event baru: Rekaman Suara (VN Indicator)
   socket.on('recording-audio', () => {
       const partnerSocket = getPartnerSocket(socketToUser.get(socket.id));
       if (partnerSocket) partnerSocket.emit('recording-audio');
