@@ -144,8 +144,6 @@ io.on('connection', (socket) => {
         socketToUser.delete(socket.id);
         const user = users.get(userId);
         
-        // BUG FIX: Hanya set offline jika socket yang terputus adalah socket yang aktif saat ini.
-        // Mencegah bug offline saat user refresh atau buka tab baru dengan cepat.
         if (user && user.socketId === socket.id) {
             user.online = false;
             user.lastSeen = Date.now();
@@ -200,6 +198,9 @@ io.on('connection', (socket) => {
         users.set(userId, user);
     } else {
         user.name = data.name ? String(data.name).trim() : 'Anonim';
+        user.age = data.age ? Number(data.age) : null;
+        user.gender = data.gender ? String(data.gender).trim() : '-';
+        user.job = data.job ? String(data.job).trim() : '-';
         user.server = data.server;
         if(data.profilePic) user.profilePic = data.profilePic;
         user.online = true;
