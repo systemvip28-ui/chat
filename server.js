@@ -4,7 +4,7 @@ const { Server } = require('socket.io');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const cloudinary = require('cloudinary').v2;
-const https = require('https'); // Modul https dipindahkan ke atas
+const https = require('https'); // Modul https untuk request API
 
 cloudinary.config({
   cloud_name:     'davgb7tjm',        
@@ -136,12 +136,21 @@ io.on('connection', (socket) => {
   onlineCountGlobal++;
   io.emit('online-count', onlineCountGlobal);
 
-  // --- FITUR AI DIPINDAHKAN KE DALAM SINI ---
+  // --- FITUR AI (UPDATE ANTI-TIMEOUT & ANTI-BOT) ---
   socket.on("ask-ai", (promptText) => {
       const text = encodeURIComponent(promptText || "Halo");
-      const url = `https://api.popcat.xyz/chatbot?msg=${text}&owner=Sanz&botname=AI`;
+      
+      const url = `https://api.ryzendesu.vip/api/ai/chatgpt?text=${text}`;
 
-      https.get(url, (res) => {
+      const options = {
+          headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
+              'Accept': 'application/json'
+          },
+          timeout: 10000 
+      };
+
+      const req = https.get(url, options, (res) => {
           let rawData = '';
           
           res.on('data', (chunk) => { 
@@ -151,21 +160,27 @@ io.on('connection', (socket) => {
           res.on('end', () => {
               try {
                   const data = JSON.parse(rawData);
-                  let aiReply = data.response || "Maaf, AI tidak merespon.";
+                  let aiReply = data.response || data.result || data.message || data.answer || "Maaf, AI tidak merespon.";
                   socket.emit("ai-reply", aiReply);
               } catch (e) {
-                  console.error("Error parsing JSON:", e.message);
-                  console.log("Respon Mentah:", rawData); 
+                  console.error("Error AI format:", e.message);
                   socket.emit("ai-reply", "Terjadi kesalahan format dari server AI.");
               }
           });
           
-      }).on('error', (e) => {
+      });
+
+      req.on('timeout', () => {
+          req.destroy();
+          socket.emit("ai-reply", "Server AI sedang sibuk (Timed Out). Silakan coba lagi.");
+      });
+
+      req.on('error', (e) => {
           console.error("Koneksi ke API Gagal:", e.message);
           socket.emit("ai-reply", "Koneksi ke server AI terputus.");
       });
   });
-  // ------------------------------------------
+  // -------------------------------------------------
 
   socket.on('disconnect', () => {
     onlineCountGlobal--;
