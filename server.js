@@ -241,6 +241,20 @@ io.on('connection', (socket) => {
           }
       }
   });
+  
+  socket.on("ask-ai", async (promptText) => {
+    try {
+        const fetch = require('node-fetch'); 
+        const url = `https://api.ryzendesu.vip/api/ai/chatgpt?text=${encodeURIComponent(promptText)}`;
+        const response = await fetch(url);
+        const data = await response.json();
+
+        let aiReply = data.response || data.result || data.message || "Maaf, AI tidak merespon.";
+        socket.emit("ai-reply", aiReply);
+    } catch (error) {
+        socket.emit("ai-reply", "Gagal menghubungi AI dari server.");
+    }
+});
 
   socket.on('update-profile-pic', (url) => {
     const userId = socketToUser.get(socket.id);
