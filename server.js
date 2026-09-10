@@ -4,7 +4,6 @@ const { Server } = require('socket.io');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const cloudinary = require('cloudinary').v2;
-const https = require('https'); // Modul https untuk request API
 
 cloudinary.config({
   cloud_name:     'davgb7tjm',        
@@ -135,58 +134,6 @@ let onlineCountGlobal = 0;
 io.on('connection', (socket) => {
   onlineCountGlobal++;
   io.emit('online-count', onlineCountGlobal);
-
-socket.on("ask-ai", (promptText) => {
-      const text = encodeURIComponent(promptText || "Halo");
-      const url = `https://api.ryzendesu.vip/api/ai/chatgpt?text=${text}`;
-
-      const options = {
-          headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36',
-              'Accept': 'application/json'
-          },
-          timeout: 10000 
-      };
-
-      const req = https.get(url, options, (res) => {
-          let rawData = '';
-          
-          res.on('data', (chunk) => { 
-              rawData += chunk; 
-          });
-          
-          res.on('end', () => {
-              try {
-                  // Coba parsing sebagai JSON
-                  const data = JSON.parse(rawData);
-                  let aiReply = data.response || data.result || data.message || data.answer || data.text;
-                  
-                  if (aiReply) {
-                      socket.emit("ai-reply", aiReply);
-                  } else {
-                      socket.emit("ai-reply", "Format data JSON tidak dikenali.");
-                  }
-              } catch (e) {
-                  // Jika ternyata bukan JSON (misal teks biasa atau HTML error), kirim langsung teksnya
-                  if (rawData && rawData.length < 300 && !rawData.includes("<html")) {
-                      socket.emit("ai-reply", rawData.trim());
-                  } else {
-                      console.error("Respon bukan JSON yang valid:", rawData);
-                      socket.emit("ai-reply", "Server AI sedang sibuk atau mengubah format.");
-                  }
-              }
-          });
-      });
-
-      req.on('timeout', () => {
-          req.destroy();
-          socket.emit("ai-reply", "Server AI sedang sibuk (Timed Out).");
-      });
-
-      req.on('error', (e) => {
-          socket.emit("ai-reply", "Koneksi ke server AI terputus.");
-      });
-  });
 
   socket.on('disconnect', () => {
     onlineCountGlobal--;
