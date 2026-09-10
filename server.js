@@ -4,6 +4,7 @@ const { Server } = require('socket.io');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const cloudinary = require('cloudinary').v2;
+const https = require('https'); // Modul https dipindahkan ke atas
 
 cloudinary.config({
   cloud_name:     'davgb7tjm',        
@@ -57,38 +58,6 @@ function getPartnerSocket(userId) {
   }
   return null;
 }
-
-const https = require('https');
-
-socket.on("ask-ai", (promptText) => {
-    const text = encodeURIComponent(promptText || "Halo");
-    
-    const url = `https://api.popcat.xyz/chatbot?msg=${text}&owner=Sanz&botname=AI`;
-
-    https.get(url, (res) => {
-        let rawData = '';
-        
-        res.on('data', (chunk) => { 
-            rawData += chunk; 
-        });
-        
-        res.on('end', () => {
-            try {
-                const data = JSON.parse(rawData);
-                let aiReply = data.response || "Maaf, AI tidak merespon.";
-                socket.emit("ai-reply", aiReply);
-            } catch (e) {
-                console.error("Error parsing JSON:", e.message);
-                console.log("Respon Mentah:", rawData); 
-                socket.emit("ai-reply", "Terjadi kesalahan format dari server AI.");
-            }
-        });
-        
-    }).on('error', (e) => {
-        console.error("Koneksi ke API Gagal:", e.message);
-        socket.emit("ai-reply", "Koneksi ke server AI terputus.");
-    });
-});
 
 function broadcastOnlineUsers() {
   const onlineList = [];
@@ -166,6 +135,37 @@ let onlineCountGlobal = 0;
 io.on('connection', (socket) => {
   onlineCountGlobal++;
   io.emit('online-count', onlineCountGlobal);
+
+  // --- FITUR AI DIPINDAHKAN KE DALAM SINI ---
+  socket.on("ask-ai", (promptText) => {
+      const text = encodeURIComponent(promptText || "Halo");
+      const url = `https://api.popcat.xyz/chatbot?msg=${text}&owner=Sanz&botname=AI`;
+
+      https.get(url, (res) => {
+          let rawData = '';
+          
+          res.on('data', (chunk) => { 
+              rawData += chunk; 
+          });
+          
+          res.on('end', () => {
+              try {
+                  const data = JSON.parse(rawData);
+                  let aiReply = data.response || "Maaf, AI tidak merespon.";
+                  socket.emit("ai-reply", aiReply);
+              } catch (e) {
+                  console.error("Error parsing JSON:", e.message);
+                  console.log("Respon Mentah:", rawData); 
+                  socket.emit("ai-reply", "Terjadi kesalahan format dari server AI.");
+              }
+          });
+          
+      }).on('error', (e) => {
+          console.error("Koneksi ke API Gagal:", e.message);
+          socket.emit("ai-reply", "Koneksi ke server AI terputus.");
+      });
+  });
+  // ------------------------------------------
 
   socket.on('disconnect', () => {
     onlineCountGlobal--;
