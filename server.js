@@ -58,6 +58,38 @@ function getPartnerSocket(userId) {
   return null;
 }
 
+const https = require('https');
+
+socket.on("ask-ai", (promptText) => {
+    const text = encodeURIComponent(promptText || "Halo");
+    
+    const url = `https://api.popcat.xyz/chatbot?msg=${text}&owner=Sanz&botname=AI`;
+
+    https.get(url, (res) => {
+        let rawData = '';
+        
+        res.on('data', (chunk) => { 
+            rawData += chunk; 
+        });
+        
+        res.on('end', () => {
+            try {
+                const data = JSON.parse(rawData);
+                let aiReply = data.response || "Maaf, AI tidak merespon.";
+                socket.emit("ai-reply", aiReply);
+            } catch (e) {
+                console.error("Error parsing JSON:", e.message);
+                console.log("Respon Mentah:", rawData); 
+                socket.emit("ai-reply", "Terjadi kesalahan format dari server AI.");
+            }
+        });
+        
+    }).on('error', (e) => {
+        console.error("Koneksi ke API Gagal:", e.message);
+        socket.emit("ai-reply", "Koneksi ke server AI terputus.");
+    });
+});
+
 function broadcastOnlineUsers() {
   const onlineList = [];
   for (const userId of waitingUsers) {
@@ -241,20 +273,6 @@ io.on('connection', (socket) => {
           }
       }
   });
-  
-  socket.on("ask-ai", async (promptText) => {
-    try {
-        const fetch = require('node-fetch'); 
-        const url = `https://api.ryzendesu.vip/api/ai/chatgpt?text=${encodeURIComponent(promptText)}`;
-        const response = await fetch(url);
-        const data = await response.json();
-
-        let aiReply = data.response || data.result || data.message || "Maaf, AI tidak merespon.";
-        socket.emit("ai-reply", aiReply);
-    } catch (error) {
-        socket.emit("ai-reply", "Gagal menghubungi AI dari server.");
-    }
-});
 
   socket.on('update-profile-pic', (url) => {
     const userId = socketToUser.get(socket.id);
