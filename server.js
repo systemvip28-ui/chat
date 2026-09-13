@@ -158,7 +158,18 @@ io.on('connection', (socket) => {
         }
     }
     
-    socket.on('edit-message', ({ msgId, newText }) => {
+    for (const [cid, call] of activeCalls.entries()) {
+      if (cid === socket.id || call.to === socket.id) {
+        if (call.timeout) clearTimeout(call.timeout);
+        activeCalls.delete(cid);
+        const other = io.sockets.sockets.get(cid === socket.id ? call.to : cid);
+        if (other) other.emit('call-rejected', { reason: 'partner terputus' });
+      }
+    }
+    broadcastOnlineUsers(); 
+  });
+  
+  socket.on('edit-message', ({ msgId, newText }) => {
     const userId = socketToUser.get(socket.id);
     if (!userId) return;
     const partnerId = pairs.get(userId);
@@ -177,17 +188,6 @@ io.on('connection', (socket) => {
 
     const partnerSocket = getPartnerSocket(userId);
     if (partnerSocket) partnerSocket.emit('edit-message', { msgId, newText });
-  });
-    
-    for (const [cid, call] of activeCalls.entries()) {
-      if (cid === socket.id || call.to === socket.id) {
-        if (call.timeout) clearTimeout(call.timeout);
-        activeCalls.delete(cid);
-        const other = io.sockets.sockets.get(cid === socket.id ? call.to : cid);
-        if (other) other.emit('call-rejected', { reason: 'partner terputus' });
-      }
-    }
-    broadcastOnlineUsers(); 
   });
   
   socket.on("mark-read", (data) => {
