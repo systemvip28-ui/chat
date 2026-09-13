@@ -170,7 +170,12 @@ io.on('connection', (socket) => {
   });
   
   socket.on("mark-read", (data) => {
-    socket.to(partnerId).emit("message-read", data);
+    const userId = socketToUser.get(socket.id);
+    if (!userId) return;
+    const partnerSocket = getPartnerSocket(userId);
+    if (partnerSocket) {
+      partnerSocket.emit("message-read", data);
+    }
   });
 
   socket.on('get-online-count', () => {
