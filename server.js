@@ -158,6 +158,26 @@ io.on('connection', (socket) => {
         }
     }
     
+    socket.on('edit-message', ({ msgId, newText }) => {
+    const userId = socketToUser.get(socket.id);
+    if (!userId) return;
+    const partnerId = pairs.get(userId);
+
+    if (partnerId) {
+        const pairKey = getPairKey(userId, partnerId);
+        const arr = chatHistories.get(pairKey);
+        if (arr) {
+            const msgObj = arr.find(m => m.id === msgId);
+            if (msgObj) {
+                msgObj.text = newText; 
+            }
+        }
+    }
+
+    const partnerSocket = getPartnerSocket(userId);
+    if (partnerSocket) partnerSocket.emit('edit-message', { msgId, newText });
+  });
+    
     for (const [cid, call] of activeCalls.entries()) {
       if (cid === socket.id || call.to === socket.id) {
         if (call.timeout) clearTimeout(call.timeout);
