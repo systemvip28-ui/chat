@@ -168,6 +168,10 @@ io.on('connection', (socket) => {
     }
     broadcastOnlineUsers(); 
   });
+  
+  socket.on("mark-read", (data) => {
+    socket.to(partnerId).emit("message-read", data);
+  });
 
   socket.on('get-online-count', () => {
     socket.emit('online-count', onlineCountGlobal);
