@@ -172,6 +172,19 @@ io.on('connection', (socket) => {
   socket.on("mark-read", (data) => {
     const userId = socketToUser.get(socket.id);
     if (!userId) return;
+
+    const partnerId = pairs.get(userId);
+    if (partnerId) {
+        const pairKey = getPairKey(userId, partnerId);
+        const arr = chatHistories.get(pairKey);
+        if (arr) {
+            const msgObj = arr.find(m => m.id === data.msgId);
+            if (msgObj) {
+                msgObj.isRead = true; 
+            }
+        }
+    }
+
     const partnerSocket = getPartnerSocket(userId);
     if (partnerSocket) {
       partnerSocket.emit("message-read", data);
