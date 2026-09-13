@@ -169,7 +169,8 @@ io.on('connection', (socket) => {
         if (arr) {
             const msgObj = arr.find(m => m.id === msgId);
             if (msgObj) {
-                msgObj.text = newText; 
+                msgObj.text = newText;
+                msgObj.isEdited = true; 
             }
         }
     }
