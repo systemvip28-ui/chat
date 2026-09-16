@@ -536,6 +536,26 @@ io.on('connection', (socket) => {
   });
 });
 
+  socket.on('sync-game', (data) => {
+    const userId = socketToUser.get(socket.id);
+    if (!userId) return;
+
+    const partnerSocket = getPartnerSocket(userId);
+    if (partnerSocket) {
+      partnerSocket.emit('sync-game', data);
+    }
+  });
+
+  socket.on('sync-spotify', (data) => {
+    const userId = socketToUser.get(socket.id);
+    if (!userId) return;
+
+    const partnerSocket = getPartnerSocket(userId);
+    if (partnerSocket) {
+      partnerSocket.emit('sync-spotify', data);
+    }
+  });
+
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server berjalan di port ${PORT}`);
