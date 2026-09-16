@@ -528,13 +528,12 @@ io.on('connection', (socket) => {
   socket.on('end-call', () => {
     if (recentlyEndedCalls.has(socket.id)) return;
     recentlyEndedCalls.add(socket.id);
-    setTimeout(() => recentlyEndedCalls.delete(socket.id), 8000);
+    setTimeout(() => recentlyEndedCalls.delete(socket.id), 2000);
 
     const p = getPartnerSocket(socketToUser.get(socket.id));
     if (p) p.emit('end-call');
     activeCalls.delete(socket.id);
   });
-});
 
   socket.on('sync-game', (data) => {
     const userId = socketToUser.get(socket.id);
@@ -556,6 +555,7 @@ io.on('connection', (socket) => {
     }
   });
 
+}); 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server berjalan di port ${PORT}`);
