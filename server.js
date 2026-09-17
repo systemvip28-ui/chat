@@ -4,6 +4,7 @@ const { Server } = require('socket.io');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const cloudinary = require('cloudinary').v2;
+const webpush = require('web-push'); 
 
 cloudinary.config({
   cloud_name:     'davgb7tjm',        
@@ -11,6 +12,15 @@ cloudinary.config({
   api_secret:     '3OG8-xUQlkYGt1uYO7yrPVoPFCo',  
   secure: true
 });
+
+const publicVapidKey = 'BIxvrkbFy_0mhFGblRKC-VjF7K8g--lUrVImmrPDkqJWfs4sgl263ohYv0Mk8eSC7QJilGHM0onkSErMkBNjuWQ';
+const privateVapidKey = 'pK-ix1UQhONUKdDS75XXYA637FnZu3hMsR8KvG-RiIk';
+
+webpush.setVapidDetails(
+  'mailto:fast16932@gmail.com', 
+  publicVapidKey,
+  privateVapidKey
+);
 
 const app = express();
 const server = http.createServer(app);
@@ -169,6 +179,16 @@ io.on('connection', (socket) => {
     broadcastOnlineUsers(); 
   });
   
+  socket.on('subscribe-push', (subscription) => {
+    const userId = socketToUser.get(socket.id);
+    if (userId) {
+        const user = users.get(userId);
+        if (user) {
+            user.pushSubscription = subscription;
+        }
+    }
+  });
+
   socket.on('edit-message', ({ msgId, newText }) => {
     const userId = socketToUser.get(socket.id);
     if (!userId) return;
@@ -236,14 +256,15 @@ io.on('connection', (socket) => {
             profilePic: data.profilePic || '',
             history: new Set(), 
             stories: [], 
-            online: true 
+            online: true,
+            pushSubscription: null 
         };
         users.set(userId, user);
     } else {
         user.name = data.name ? String(data.name).trim() : 'Anonim';
         user.age = data.age ? Number(data.age) : null;
-        user.gender = data.gender ? String(data.gender).trim() : '-';
-        user.job = data.job ? String(data.job).trim() : '-';
+        user.gender = data.gender ? String(data.gender).trim() : '-',
+        user.job = data.job ? String(data.job).trim() : '-',
         user.server = data.server;
         if(data.profilePic) user.profilePic = data.profilePic;
         user.online = true;
@@ -337,24 +358,6 @@ io.on('connection', (socket) => {
       });
   });
 
-  socket.on('view-story', (storyId) => {
-      const userId = socketToUser.get(socket.id);
-      const partnerId = pairs.get(userId);
-      if (userId && partnerId) {
-          const myInfo = users.get(userId);
-          const partnerInfo = users.get(partnerId);
-          
-          if (myInfo && partnerInfo) {
-              const story = partnerInfo.stories.find(s => s.id === storyId);
-              if (story) {
-                  if (!story.viewers.find(v => v.id === userId)) {
-                      story.viewers.push({ id: userId, name: myInfo.name });
-                  }
-              }
-          }
-      }
-  });
-
   socket.on('message', (msgData) => {
     const userId = socketToUser.get(socket.id);
     if (!userId) return;
@@ -376,7 +379,26 @@ io.on('connection', (socket) => {
     if(arr.length > 1000) arr.shift(); 
 
     const partnerSocket = getPartnerSocket(userId);
-    if (partnerSocket) partnerSocket.emit('message', fullMessage);
+    if (partnerSocket) {
+
+        partnerSocket.emit('message', fullMessage);
+    } else {
+        const partnerInfo = users.get(partnerId);
+        const myInfo = users.get(userId);
+        
+        if (partnerInfo && partnerInfo.pushSubscription) {
+            let pushBody = msgData.text || 'Mengirim media/pesan baru';
+            
+            const payload = JSON.stringify({
+                title: `Pesan baru dari ${myInfo ? myInfo.name : 'Partner'}`,
+                body: pushBody,
+                url: '/chat.html'
+            });
+
+            webpush.sendNotification(partnerInfo.pushSubscription, payload)
+                .catch(err => console.error("Error kirim push notification:", err));
+        }
+    }
     
     if (msgData.type !== 'system') {
         socket.emit('message-confirmed', { id: messageId });
@@ -556,6 +578,7 @@ io.on('connection', (socket) => {
   });
 
 }); 
+
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server berjalan di port ${PORT}`);
