@@ -387,7 +387,7 @@ io.on('connection', (socket) => {
         const myInfo = users.get(userId);
         
         if (partnerInfo && partnerInfo.pushSubscription) {
-            let pushBody = msgData.text || 'Mengirim media/pesan baru';
+            let pushBody = msgData.text || 'Mengirim pesan lainnya';
             
             const payload = JSON.stringify({
                 title: `Pesan baru dari ${myInfo ? myInfo.name : 'Partner'}`,
