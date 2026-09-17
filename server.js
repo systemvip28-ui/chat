@@ -395,7 +395,14 @@ io.on('connection', (socket) => {
                 url: '/chat.html'
             });
 
-            webpush.sendNotification(partnerInfo.pushSubscription, payload)
+            const options = {
+                TTL: 2419200, 
+                headers: {
+                    'Urgency': 'high' 
+                }
+            };
+
+            webpush.sendNotification(partnerInfo.pushSubscription, payload, options)
                 .catch(err => console.error("Error kirim push notification:", err));
         }
     }
