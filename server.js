@@ -448,6 +448,24 @@ io.on('connection', (socket) => {
     if (partnerSocket) partnerSocket.emit('delete-for-everyone', { msgId });
     socket.emit('delete-for-everyone', { msgId });
   });
+  
+  socket.on('clear-chat', () => {
+    const userId = socketToUser.get(socket.id);
+    if (!userId) return;
+    
+    const partnerId = pairs.get(userId);
+    
+    if (partnerId) {
+
+        const pairKey = getPairKey(userId, partnerId);
+        chatHistories.set(pairKey, []);
+
+        const partnerSocket = getPartnerSocket(userId);
+        if (partnerSocket) {
+            partnerSocket.emit('chat-cleared');
+        }
+    }
+  });
 
   socket.on('typing', () => {
     const partnerSocket = getPartnerSocket(socketToUser.get(socket.id));
