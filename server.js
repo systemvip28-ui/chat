@@ -396,11 +396,42 @@ io.on('connection', (socket) => {
       if (!partnerId) return;
 
       const partnerInfo = users.get(partnerId);
+      const myInfo = users.get(userId); 
+
       if (partnerInfo) {
           const story = partnerInfo.stories.find(s => s.id === storyId);
 
           if (story && !story.viewers.includes(userId)) {
+
               story.viewers.push(userId);
+
+              const storyOwnerSocket = io.sockets.sockets.get(partnerInfo.socketId);
+              
+              if (storyOwnerSocket) {
+
+                  storyOwnerSocket.emit('story-viewed-by-partner', { 
+                      storyId: storyId, 
+                      viewerName: myInfo ? myInfo.name : 'Partner' 
+                  });
+
+                  let processedPartnerStories = [];
+                  let hasUnseen = false;
+                  
+                  if (myInfo && myInfo.stories) {
+                      processedPartnerStories = myInfo.stories.map(s => {
+                          const isSeen = s.viewers.includes(partnerId);
+                          if (!isSeen) hasUnseen = true; 
+                          return { ...s, isSeen: isSeen };
+                      });
+                  }
+
+                  storyOwnerSocket.emit('stories-data', {
+                      myStories: partnerInfo.stories,
+                      partnerStories: processedPartnerStories, 
+                      partnerName: myInfo ? myInfo.name : 'Partner',
+                      hasUnseenPartnerStory: hasUnseen 
+                  });
+              }
           }
       }
   });
@@ -628,28 +659,6 @@ io.on('connection', (socket) => {
     if (p) p.emit('end-call');
     activeCalls.delete(socket.id);
   });
-
-  socket.on('sync-game', (data) => {
-    const userId = socketToUser.get(socket.id);
-    if (!userId) return;
-
-    const partnerSocket = getPartnerSocket(userId);
-    if (partnerSocket) {
-      partnerSocket.emit('sync-game', data);
-    }
-  });
-
-  socket.on('sync-spotify', (data) => {
-    const userId = socketToUser.get(socket.id);
-    if (!userId) return;
-
-    const partnerSocket = getPartnerSocket(userId);
-    if (partnerSocket) {
-      partnerSocket.emit('sync-spotify', data);
-    }
-  });
-
-}); 
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
