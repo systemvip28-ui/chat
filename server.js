@@ -302,6 +302,13 @@ io.on('connection', (socket) => {
           if (user) {
               if (data.name) user.name = data.name;
               if (data.age) user.age = data.age;
+              if (data.gender) user.gender = data.gender;
+              if (data.job) user.job = data.job;
+
+              const partnerSocket = getPartnerSocket(userId);
+              if (partnerSocket) {
+                  partnerSocket.emit('partner-info-updated', data);
+              }
           }
       }
   });
@@ -330,6 +337,11 @@ io.on('connection', (socket) => {
                 timestamp: Date.now(),
                 viewers: []
             });
+
+            const partnerSocket = getPartnerSocket(userId);
+            if (partnerSocket) {
+                partnerSocket.emit('partner-story-updated');
+            }
         }
     }
   });
@@ -340,6 +352,11 @@ io.on('connection', (socket) => {
           const user = users.get(userId);
           if (user) {
               user.stories = user.stories.filter(s => s.id !== storyId);
+
+              const partnerSocket = getPartnerSocket(userId);
+              if (partnerSocket) {
+                  partnerSocket.emit('partner-story-updated');
+              }
           }
       }
   });
@@ -347,15 +364,45 @@ io.on('connection', (socket) => {
   socket.on('get-stories', () => {
       const userId = socketToUser.get(socket.id);
       if (!userId) return;
+      
       const myInfo = users.get(userId);
       const partnerId = pairs.get(userId);
       let partnerInfo = partnerId ? users.get(partnerId) : null;
       
+      let processedPartnerStories = [];
+      let hasUnseen = false;
+
+      if (partnerInfo && partnerInfo.stories) {
+          processedPartnerStories = partnerInfo.stories.map(s => {
+              const isSeen = s.viewers.includes(userId);
+              if (!isSeen) hasUnseen = true; 
+              return { ...s, isSeen: isSeen };
+          });
+      }
+      
       socket.emit('stories-data', {
           myStories: myInfo ? myInfo.stories : [],
-          partnerStories: partnerInfo ? partnerInfo.stories : [],
-          partnerName: partnerInfo ? partnerInfo.name : 'Partner'
+          partnerStories: processedPartnerStories, 
+          partnerName: partnerInfo ? partnerInfo.name : 'Partner',
+          hasUnseenPartnerStory: hasUnseen 
       });
+  });
+
+  socket.on('mark-story-seen', (storyId) => {
+      const userId = socketToUser.get(socket.id);
+      if (!userId) return;
+      
+      const partnerId = pairs.get(userId);
+      if (!partnerId) return;
+
+      const partnerInfo = users.get(partnerId);
+      if (partnerInfo) {
+          const story = partnerInfo.stories.find(s => s.id === storyId);
+
+          if (story && !story.viewers.includes(userId)) {
+              story.viewers.push(userId);
+          }
+      }
   });
 
   socket.on('message', (msgData) => {
