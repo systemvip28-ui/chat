@@ -231,6 +231,32 @@ io.on('connection', (socket) => {
       partnerSocket.emit("message-read", data);
     }
   });
+  
+  socket.on('view-once-opened', ({ msgId }) => {
+    const userId = socketToUser.get(socket.id);
+    if (!userId) return;
+
+    const partnerId = pairs.get(userId);
+    if (partnerId) {
+
+        const pairKey = getPairKey(userId, partnerId);
+        const arr = chatHistories.get(pairKey);
+        
+        if (arr) {
+
+            const msgObj = arr.find(m => m.id === msgId);
+            if (msgObj) {
+
+                msgObj.isOpened = true; 
+            }
+        }
+    }
+
+    const partnerSocket = getPartnerSocket(userId);
+    if (partnerSocket) {
+      partnerSocket.emit('view-once-opened', { msgId });
+    }
+  });
 
   socket.on('get-online-count', () => {
     socket.emit('online-count', onlineCountGlobal);
