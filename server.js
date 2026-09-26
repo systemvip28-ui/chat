@@ -280,8 +280,6 @@ io.on('connection', (socket) => {
             job: data.job ? String(data.job).trim() : '-',
             server: data.server,
             profilePic: data.profilePic || '',
-            lat: data.lat || null, 
-            lon: data.lon || null,
             history: new Set(), 
             stories: [], 
             online: true,
@@ -295,8 +293,6 @@ io.on('connection', (socket) => {
         user.job = data.job ? String(data.job).trim() : '-',
         user.server = data.server;
         if(data.profilePic) user.profilePic = data.profilePic;
-        if(data.lat) user.lat = data.lat;
-        if(data.lon) user.lon = data.lon;
         user.online = true;
     }
     user.socketId = socket.id;
@@ -334,8 +330,6 @@ io.on('connection', (socket) => {
               if (data.age) user.age = data.age;
               if (data.gender) user.gender = data.gender;
               if (data.job) user.job = data.job;
-              if (data.lat) user.lat = data.lat;
-              if (data.lon) user.lon = data.lon;
 
               const partnerSocket = getPartnerSocket(userId);
               if (partnerSocket) {
